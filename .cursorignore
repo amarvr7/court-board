@@ -1,0 +1,9 @@
+# Ignore local CSV exports from AI indexing
+/local-data
+/local-data/
+/local-data/**
+local-data/
+*.local.csv
+.env
+.env.*
+!.env.example

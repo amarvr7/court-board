@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+/*
+ * Theme modeled on the IMG Academy ITC event page:
+ *   - DM Sans for body copy
+ *   - Condensed uppercase display face for headings (Barlow Condensed ≈ Trade Gothic Bold Condensed No. 20)
+ *   - Primary blue #006FEB, navy #080F17, steel #587089, ice #D0E1F7, tennis-ball lime #C1E014
+ *
+ * The default `emerald` and `slate` scales are remapped so every existing utility
+ * class picks up the new palette automatically.
+ */
+
+@theme inline {
+  --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-barlow-condensed), "Arial Narrow", ui-sans-serif, sans-serif;
+}
+
+@theme {
+  /* Brand primary (blue) — replaces emerald */
+  --color-emerald-50: #e8f1fd;
+  --color-emerald-100: #d0e1f7;
+  --color-emerald-200: #b3cff3;
+  --color-emerald-300: #7fb8ff;
+  --color-emerald-400: #3d8ff2;
+  --color-emerald-500: #006feb;
+  --color-emerald-600: #006feb;
+  --color-emerald-700: #0058bd;
+  --color-emerald-800: #004494;
+  --color-emerald-900: #0a2f66;
+  --color-emerald-950: #061a3a;
+
+  /* Cool steel neutrals — replaces slate */
+  --color-slate-50: #fafbfc;
+  --color-slate-100: #f3f5f6;
+  --color-slate-200: #e5e9ed;
+  --color-slate-300: #d5dbe1;
+  --color-slate-400: #a1afbd;
+  --color-slate-500: #587089;
+  --color-slate-600: #4a5f75;
+  --color-slate-700: #2c3a49;
+  --color-slate-800: #152036;
+  --color-slate-900: #080f17;
+  --color-slate-950: #05090e;
+
+  /* Named brand tokens */
+  --color-navy: #080f17;
+  --color-ink: #0e1622;
+  --color-brand: #006feb;
+  --color-brand-dark: #0058bd;
+  --color-ice: #d0e1f7;
+  --color-mist: #e8f1fd;
+  --color-steel: #587089;
+  --color-sky-link: #7fb8ff;
+  --color-chip: #eef1f4;
+  --color-ball: #c1e014;
+  --color-ball-bright: #d4f03a;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--color-slate-50);
+    color: var(--color-slate-900);
+  }
+
+  h1,
+  h2 {
+    font-family: var(--font-display);
+    text-transform: uppercase;
+    letter-spacing: 0.01em;
+    line-height: 1.05;
+  }
+}

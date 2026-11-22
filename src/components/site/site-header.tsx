@@ -1,0 +1,85 @@
+import Link from "next/link";
+import { Shield } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { EVENT_INFO } from "@/lib/event-config";
+import { TennisBall } from "@/components/site/tennis-ball";
+
+type ActivePage = "home" | "board" | "admin";
+
+const NAV_ITEMS: Array<{ key: ActivePage; label: string; href: string }> = [
+  { key: "home", label: "Overview", href: "/" },
+  { key: "board", label: "Live Board", href: "/board" },
+];
+
+export const SiteHeader = ({ active }: { active: ActivePage }) => (
+  <header className="sticky top-0 z-40">
+    {/* Utility strip */}
+    <div className="bg-navy text-white">
+      <div className="mx-auto flex max-w-7xl items-center justify-center gap-2 px-4 py-2 text-[13px] sm:px-6 lg:px-8">
+        <span className="relative flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-ball opacity-75" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-ball" />
+        </span>
+        <span className="text-white/85">
+          {EVENT_INFO.shortName} live court assignments
+        </span>
+        <Link
+          href="/board"
+          className="font-bold text-sky-link hover:text-white"
+        >
+          View board ›
+        </Link>
+      </div>
+    </div>
+
+    {/* Main nav */}
+    <div className="border-b border-slate-200 bg-white/95 backdrop-blur">
+      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
+        <Link href="/" className="flex items-center gap-2.5" aria-label="Home">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-navy">
+            <TennisBall className="h-6 w-6" />
+          </span>
+          <span className="leading-none">
+            <span className="block font-display text-xl font-bold uppercase tracking-wide text-slate-900">
+              {EVENT_INFO.shortName} Court Board
+            </span>
+            <span className="hidden text-xs text-slate-500 sm:block">
+              {EVENT_INFO.name}
+            </span>
+          </span>
+        </Link>
+
+        <nav className="flex items-center gap-1 sm:gap-2" aria-label="Main navigation">
+          {NAV_ITEMS.map((item) => (
+            <Link
+              key={item.key}
+              href={item.href}
+              aria-current={active === item.key ? "page" : undefined}
+              className={cn(
+                "rounded-full px-3 py-2 text-sm font-medium transition sm:px-4",
+                active === item.key
+                  ? "bg-mist text-brand"
+                  : "text-slate-700 hover:bg-slate-100"
+              )}
+            >
+              {item.label}
+            </Link>
+          ))}
+          <Link
+            href="/admin"
+            aria-current={active === "admin" ? "page" : undefined}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full border px-3 py-2 text-sm font-medium transition sm:px-4",
+              active === "admin"
+                ? "border-navy bg-navy text-white"
+                : "border-slate-300 bg-white text-slate-800 hover:border-slate-400"
+            )}
+          >
+            <Shield className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>Admin</span>
+          </Link>
+        </nav>
+      </div>
+    </div>
+  </header>
+);
