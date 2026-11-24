@@ -31,8 +31,12 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${dmSans.variable} ${barlowCondensed.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col bg-slate-50 font-sans text-slate-900">
+      <body
+        className="min-h-full flex flex-col bg-slate-50 font-sans text-slate-900"
+        suppressHydrationWarning
+      >
         {children}
       </body>
     </html>
