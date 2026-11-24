@@ -8,13 +8,14 @@ import {
 } from "@/db/schema";
 import { asc } from "drizzle-orm";
 import {
+  extractLastNameAndCoach,
   formatPlayerPrivacyName,
   formatOpponentPrivacyName,
 } from "@/lib/format-player";
 
 export interface BoardPlayerDTO {
   id: number;
-  displayName: string; // Strictly "First L." for privacy on /board
+  displayName: string; // "First L. - Coach" (or "First L.") on /board
   firstName: string;
   lastInitial: string;
   movedAt: string | null;
@@ -84,11 +85,12 @@ export const getBoardCourtsData = async (): Promise<{
 
   const playerMap = new Map<number, Omit<BoardPlayerDTO, "movedAt">>();
   for (const p of allPlayers) {
+    const { lastName: cleanLast } = extractLastNameAndCoach(p.lastName);
     playerMap.set(p.id, {
       id: p.id,
       displayName: formatPlayerPrivacyName(p.firstName, p.lastName),
       firstName: p.firstName,
-      lastInitial: p.lastName.trim().charAt(0).toUpperCase(),
+      lastInitial: cleanLast.charAt(0).toUpperCase(),
     });
   }
 

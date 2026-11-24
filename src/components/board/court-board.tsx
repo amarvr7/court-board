@@ -292,8 +292,8 @@ export const CourtBoard = ({
               type="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Type a name"
-              aria-label="Search by player or opponent name"
+              placeholder="Type a player or coach name"
+              aria-label="Search by player, coach, or opponent name"
               className="h-11 pl-9 pr-9 text-base"
             />
             {searchQuery && (

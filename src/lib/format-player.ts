@@ -1,6 +1,43 @@
 /**
- * Formats a player's name as First Name + Last Initial for public board privacy.
- * Example: ("Serena", "Williams") => "Serena W."
+ * Extracts the player's last name and optional trailing coach name.
+ * Examples:
+ * - "Pazos (MD) - Jakub" => { lastName: "Pazos", coachName: "Jakub" }
+ * - "Pazos -(Jakub)" => { lastName: "Pazos", coachName: "Jakub" }
+ * - "Williams" => { lastName: "Williams", coachName: null }
+ */
+export const extractLastNameAndCoach = (
+  rawLastName?: string | null
+): { lastName: string; coachName: string | null } => {
+  const trimmed = rawLastName ? rawLastName.trim() : "";
+  if (!trimmed) {
+    return { lastName: "", coachName: null };
+  }
+
+  const coachMatch = trimmed.match(
+    /^(.*?)(?:(?:^|\s+|\))[-–—]\s*\(?([^()]+?)\)?|[-–—]\s*\(([^()]+?)\))\s*$/
+  );
+
+  if (!coachMatch) {
+    const cleanLast = trimmed.replace(/\([^)]*\)/g, "").trim();
+    return { lastName: cleanLast, coachName: null };
+  }
+
+  const rawLastPart = coachMatch[1] ?? "";
+  const cleanLast = rawLastPart.replace(/\([^)]*\)/g, "").trim();
+  const coachName = (coachMatch[2] ?? coachMatch[3] ?? "").trim();
+
+  return {
+    lastName: cleanLast,
+    coachName: coachName || null,
+  };
+};
+
+/**
+ * Formats a player's name as First Name + Last Initial (+ optional "- Coach")
+ * for public board privacy.
+ * Examples:
+ * - ("Serena", "Williams") => "Serena W."
+ * - ("Alejandro", "Pazos (MD) - Jakub") => "Alejandro P. - Jakub"
  */
 export const formatPlayerPrivacyName = (
   firstName?: string | null,
@@ -11,14 +48,17 @@ export const formatPlayerPrivacyName = (
   }
 
   const cleanFirst = firstName.trim();
-  const cleanLast = lastName ? lastName.trim() : "";
+  const { lastName: cleanLast, coachName } = extractLastNameAndCoach(lastName);
 
-  if (!cleanLast) {
-    return cleanFirst;
+  const baseName = cleanLast
+    ? `${cleanFirst} ${cleanLast.charAt(0).toUpperCase()}.`
+    : cleanFirst;
+
+  if (!coachName) {
+    return baseName;
   }
 
-  const lastInitial = cleanLast.charAt(0).toUpperCase();
-  return `${cleanFirst} ${lastInitial}.`;
+  return `${baseName} - ${coachName}`;
 };
 
 /**
