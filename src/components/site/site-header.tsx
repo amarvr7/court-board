@@ -55,8 +55,8 @@ export const SiteHeader = ({ active }: { active: ActivePage }) => {
               <Image
                 src={EVENT_INFO.logo.src}
                 alt={EVENT_INFO.logo.alt}
-                width={160}
-                height={48}
+                width={856}
+                height={210}
                 priority
                 className="h-10 w-auto"
               />
