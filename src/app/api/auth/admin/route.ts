@@ -31,7 +31,14 @@ export const POST = async (request: NextRequest) => {
 
   try {
     const body = await request.json();
-    const password = String(body?.password ?? "");
+    // Trim paste accidents; if someone includes the .env quotes, strip those too.
+    let password = String(body?.password ?? "").trim();
+    if (
+      (password.startsWith('"') && password.endsWith('"')) ||
+      (password.startsWith("'") && password.endsWith("'"))
+    ) {
+      password = password.slice(1, -1);
+    }
 
     if (!password || !verifyAdminPassword(password)) {
       adminLoginLimiter.recordFailure(clientKey);
