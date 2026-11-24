@@ -14,6 +14,7 @@ import {
   Trash2,
   Users,
   Plus,
+  X,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -54,6 +55,24 @@ Hard 1,Ava Chen,Jordan Smith,In Progress,Eli Brooks,Kai Nguyen
 `;
 
 const LIVE_STATUSES: MatchStatus[] = ["Warmup", "In Progress"];
+
+const parseCoachEmailList = (raw: string): string[] =>
+  raw
+    .split(/[\n,;]+/)
+    .map((email) => email.trim())
+    .filter(Boolean);
+
+const dedupeEmails = (emails: string[]): string[] => {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const email of emails) {
+    const key = email.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(email);
+  }
+  return unique;
+};
 
 const isCourtOccupied = (court: AdminCourtDTO): boolean =>
   court.player1Id != null ||
@@ -101,9 +120,15 @@ export const AdminDashboard = ({
   const [isSavingRoster, setIsSavingRoster] = useState<boolean>(false);
   const [removingPlayerId, setRemovingPlayerId] = useState<number | null>(null);
 
-  // Coach emails
+  // Coach email group
+  const [emailDraft, setEmailDraft] = useState<string>("");
   const [isSavingEmails, setIsSavingEmails] = useState<boolean>(false);
   const [copyDone, setCopyDone] = useState<boolean>(false);
+
+  const savedEmailList = useMemo(
+    () => dedupeEmails(parseCoachEmailList(coachEmails)),
+    [coachEmails]
+  );
 
   // CSV
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -357,25 +382,33 @@ export const AdminDashboard = ({
     }
   };
 
-  const handleSaveCoachEmails = async () => {
+  const persistCoachEmails = async (
+    nextEmails: string[],
+    options?: { clearDraft?: boolean; successText?: string }
+  ) => {
+    const coachEmailsToSave = dedupeEmails(nextEmails).join("\n");
     setIsSavingEmails(true);
     setBannerMessage(null);
     try {
       const response = await fetch("/api/admin/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ coachEmails }),
+        body: JSON.stringify({ coachEmails: coachEmailsToSave }),
       });
       const data = await response.json();
       if (!response.ok) {
         setBannerMessage({
           type: "error",
-          text: data?.error ?? "Couldn't save coach emails.",
+          text: data?.error ?? "Couldn't save the email group.",
         });
         return;
       }
-      setCoachEmails(data.coachEmails ?? coachEmails);
-      setBannerMessage({ type: "success", text: "Coach emails saved." });
+      setCoachEmails(data.coachEmails ?? coachEmailsToSave);
+      if (options?.clearDraft) setEmailDraft("");
+      setBannerMessage({
+        type: "success",
+        text: options?.successText ?? "Email group saved.",
+      });
     } catch {
       setBannerMessage({
         type: "error",
@@ -386,18 +419,36 @@ export const AdminDashboard = ({
     }
   };
 
-  const parseCoachEmailList = (raw: string): string[] =>
-    raw
-      .split(/[\n,;]+/)
-      .map((e) => e.trim())
-      .filter(Boolean);
+  const handleSaveCoachEmails = async () => {
+    const incoming = parseCoachEmailList(emailDraft);
+    if (incoming.length === 0) {
+      setBannerMessage({
+        type: "error",
+        text: "Paste at least one email, then save the group.",
+      });
+      return;
+    }
+    await persistCoachEmails([...savedEmailList, ...incoming], {
+      clearDraft: true,
+      successText: "Email group saved.",
+    });
+  };
+
+  const handleRemoveCoachEmail = async (email: string) => {
+    const next = savedEmailList.filter(
+      (item) => item.toLowerCase() !== email.toLowerCase()
+    );
+    await persistCoachEmails(next, {
+      successText: "Removed from the email group.",
+    });
+  };
 
   const handleEmailCoaches = () => {
-    const emails = parseCoachEmailList(coachEmails);
+    const emails = savedEmailList;
     if (emails.length === 0) {
       setBannerMessage({
         type: "error",
-        text: "Paste coach emails in the box below, save them, then try again.",
+        text: "Save the email group first. Then Email group sends it to everyone.",
       });
       return;
     }
@@ -610,6 +661,104 @@ export const AdminDashboard = ({
           </button>
         </div>
       )}
+
+      <Card className="border-slate-200 bg-white">
+        <CardHeader className="pb-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-lg font-bold text-slate-900">
+                <Mail className="h-5 w-5 text-brand-600" />
+                Email group
+                {savedEmailList.length > 0 && (
+                  <span className="text-sm font-medium text-slate-500">
+                    ({savedEmailList.length})
+                  </span>
+                )}
+              </CardTitle>
+              <CardDescription>
+                Preload the coaches once and save. Anyone new at the desk hits
+                Email group and it goes to everyone listed here.
+              </CardDescription>
+            </div>
+            <Button
+              type="button"
+              onClick={handleEmailCoaches}
+              aria-label="Email the group"
+              className="shrink-0"
+            >
+              <Mail className="h-3.5 w-3.5" />
+              <span>Email group</span>
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {savedEmailList.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+              No emails saved yet. Paste them below, then save the group.
+            </p>
+          ) : (
+            <ul
+              className="flex flex-wrap gap-2"
+              aria-label="Saved coach emails"
+            >
+              {savedEmailList.map((email) => (
+                <li key={email.toLowerCase()}>
+                  <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-slate-200 bg-slate-50 py-1 pl-3 pr-1 text-sm text-slate-800">
+                    <span className="truncate">{email}</span>
+                    <button
+                      type="button"
+                      onClick={() => void handleRemoveCoachEmail(email)}
+                      disabled={isSavingEmails}
+                      aria-label={`Remove ${email} from the group`}
+                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-slate-500 hover:bg-white hover:text-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:opacity-50"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div>
+            <label
+              htmlFor="coach-emails"
+              className="mb-1 block text-sm font-semibold text-slate-800"
+            >
+              Add emails
+            </label>
+            <p className="mb-2 text-xs text-slate-500">
+              One address per line, or separated by commas. Saving adds them to
+              the group above. Email group opens Outlook or Gmail on this
+              laptop.
+            </p>
+            <textarea
+              id="coach-emails"
+              value={emailDraft}
+              onChange={(e) => setEmailDraft(e.target.value)}
+              rows={3}
+              placeholder={"coach1@school.edu\ncoach2@school.edu"}
+              aria-label="Coach email addresses to add"
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+            />
+            <div className="mt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void handleSaveCoachEmails()}
+                disabled={isSavingEmails || !emailDraft.trim()}
+                aria-label="Save emails to the group"
+              >
+                <Save className="h-3.5 w-3.5" />
+                <span>
+                  {isSavingEmails ? "Saving…" : "Save to group"}
+                </span>
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <Tabs
         value={mainTab}
@@ -844,10 +993,10 @@ export const AdminDashboard = ({
                     variant="outline"
                     size="sm"
                     onClick={handleEmailCoaches}
-                    aria-label="Email coaches"
+                    aria-label="Email the group"
                   >
                     <Mail className="h-3.5 w-3.5" />
-                    <span>Email coaches</span>
+                    <span>Email group</span>
                   </Button>
                   <Button
                     type="button"
@@ -959,43 +1108,6 @@ export const AdminDashboard = ({
                 </ul>
               )}
 
-              <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
-                <label
-                  htmlFor="coach-emails"
-                  className="mb-1 block text-sm font-semibold text-slate-800"
-                >
-                  Coach emails
-                </label>
-                <p className="mb-2 text-xs text-slate-500">
-                  Paste once (comma or new line). Saved here so the desk can
-                  email everyone with one click. Opens Outlook or Gmail on this
-                  laptop.
-                </p>
-                <textarea
-                  id="coach-emails"
-                  value={coachEmails}
-                  onChange={(e) => setCoachEmails(e.target.value)}
-                  rows={3}
-                  placeholder={"coach1@school.edu\ncoach2@school.edu"}
-                  aria-label="Coach email addresses"
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
-                />
-                <div className="mt-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void handleSaveCoachEmails()}
-                    disabled={isSavingEmails}
-                    aria-label="Save coach emails"
-                  >
-                    <Save className="h-3.5 w-3.5" />
-                    <span>
-                      {isSavingEmails ? "Saving…" : "Save coach emails"}
-                    </span>
-                  </Button>
-                </div>
-              </div>
             </CardContent>
           </Card>
         </TabsContent>

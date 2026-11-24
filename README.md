@@ -34,8 +34,9 @@ and can email all coaches with one click.
 2. **Add match** — pick our player → pick court → type the opponent → Save.
    Optional doubles: our partner (roster) + opponent's partner (text).
 3. **Our matches right now** — Change court, flip Warmup / In Progress, or Clear.
-4. **Coach emails** — paste coach addresses once and Save. **Email coaches**
-   opens Outlook or Gmail on this laptop (`mailto:`). **Copy matches** pastes
+4. **Email group** — paste coach addresses once and **Save to group**. They stay
+   visible at the top of the desk. **Email group** opens Outlook or Gmail on
+   this laptop (`mailto:`) and sends to everyone saved. **Copy matches** pastes
    the same list into a group text or WhatsApp.
 5. Email / copy lines use the same short names as the board
    (`Maya R. – Hard 12 vs Jordan S. (In Progress)`), then the board link and a

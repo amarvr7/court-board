@@ -37,7 +37,7 @@ export default async function AdminPage() {
         compact
         eyebrow="Ascender desk"
         title="Court desk"
-        subtitle="Add matches in seconds, manage the roster, and email coaches with one click."
+        subtitle="Add matches in seconds, manage the roster, and email the group with one click."
       >
         <Link
           href="/"
