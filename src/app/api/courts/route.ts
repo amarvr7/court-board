@@ -13,17 +13,36 @@ import { findAssignmentConflicts } from "@/lib/assignments";
 export const dynamic = "force-dynamic";
 
 const VALID_STATUSES = new Set<string>(matchStatusEnum.enumValues);
+const LIVE_STATUSES = new Set<MatchStatus>(["Warmup", "In Progress"]);
 
-const PLAYER_SLOTS = ["player1Id", "player2Id", "player3Id", "player4Id"] as const;
-type PlayerSlot = (typeof PLAYER_SLOTS)[number];
-
-/** undefined = not sent (leave as is), null = clear, number = assign */
 const readPlayerId = (value: unknown): number | null | undefined => {
   if (value === undefined) return undefined;
   if (value === null || value === "") return null;
   const n = Number(value);
   return Number.isInteger(n) && n > 0 ? n : undefined;
 };
+
+const readText = (value: unknown): string | null | undefined => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim().replace(/\s+/g, " ");
+  return trimmed || null;
+};
+
+const clearMatchPayload = () => ({
+  status: "Open" as MatchStatus,
+  player1Id: null,
+  player2Id: null,
+  player3Id: null,
+  player4Id: null,
+  opponentName: null,
+  opponentPartnerName: null,
+  statusChangedAt: null,
+  player1MovedAt: null,
+  player3MovedAt: null,
+  updatedAt: new Date(),
+});
 
 export const GET = async (request: NextRequest) => {
   try {
@@ -75,14 +94,80 @@ export const PATCH = async (request: NextRequest) => {
     if (action === "clear") {
       await db
         .update(courts)
+        .set(clearMatchPayload())
+        .where(eq(courts.id, courtId));
+
+      const updatedData = await getAdminCourtsAndPlayersData();
+      return NextResponse.json(updatedData);
+    }
+
+    const allCourts = await db.select().from(courts);
+    const targetCourt = allCourts.find((c) => c.id === courtId);
+    if (!targetCourt) {
+      return NextResponse.json({ error: "Court not found." }, { status: 404 });
+    }
+
+    // Move an existing match to a different (empty) court
+    if (action === "move") {
+      const toCourtId = Number(body?.toCourtId);
+      if (!toCourtId || Number.isNaN(toCourtId)) {
+        return NextResponse.json(
+          { error: "Valid toCourtId is required." },
+          { status: 400 }
+        );
+      }
+      if (toCourtId === courtId) {
+        return NextResponse.json(
+          { error: "That match is already on this court." },
+          { status: 400 }
+        );
+      }
+
+      const destination = allCourts.find((c) => c.id === toCourtId);
+      if (!destination) {
+        return NextResponse.json(
+          { error: "Destination court not found." },
+          { status: 404 }
+        );
+      }
+
+      const destOccupied =
+        destination.player1Id != null ||
+        destination.player3Id != null ||
+        Boolean(destination.opponentName?.trim()) ||
+        destination.status === "Warmup" ||
+        destination.status === "In Progress";
+
+      if (destOccupied) {
+        return NextResponse.json(
+          {
+            error: `${destination.name} already has a match. Clear it first.`,
+          },
+          { status: 409 }
+        );
+      }
+
+      const now = new Date();
+      await db
+        .update(courts)
         .set({
-          status: "Open",
-          player1Id: null,
+          status: targetCourt.status,
+          player1Id: targetCourt.player1Id,
           player2Id: null,
-          player3Id: null,
+          player3Id: targetCourt.player3Id,
           player4Id: null,
-          updatedAt: new Date(),
+          opponentName: targetCourt.opponentName,
+          opponentPartnerName: targetCourt.opponentPartnerName,
+          statusChangedAt: targetCourt.statusChangedAt,
+          player1MovedAt: targetCourt.player1Id ? now : null,
+          player3MovedAt: targetCourt.player3Id ? now : null,
+          updatedAt: now,
         })
+        .where(eq(courts.id, toCourtId));
+
+      await db
+        .update(courts)
+        .set(clearMatchPayload())
         .where(eq(courts.id, courtId));
 
       const updatedData = await getAdminCourtsAndPlayersData();
@@ -97,37 +182,121 @@ export const PATCH = async (request: NextRequest) => {
       );
     }
 
-    const allCourts = await db.select().from(courts);
-    const targetCourt = allCourts.find((c) => c.id === courtId);
-    if (!targetCourt) {
-      return NextResponse.json({ error: "Court not found." }, { status: 404 });
+    const nextPlayer1 = readPlayerId(body?.player1Id);
+    const nextPlayer3 = readPlayerId(body?.player3Id);
+    const nextOpponent = readText(body?.opponentName);
+    const nextOpponentPartner = readText(body?.opponentPartnerName);
+
+    const assigningMatch =
+      nextPlayer1 !== undefined ||
+      nextPlayer3 !== undefined ||
+      nextOpponent !== undefined ||
+      nextOpponentPartner !== undefined ||
+      (status !== undefined && LIVE_STATUSES.has(status));
+
+    // Block saving a new assignment onto an already-occupied court unless
+    // we're only flipping status / clearing fields on the same court.
+    const currentlyOccupied =
+      targetCourt.player1Id != null ||
+      targetCourt.player3Id != null ||
+      Boolean(targetCourt.opponentName?.trim());
+
+    const replacingPlayers =
+      (nextPlayer1 !== undefined && nextPlayer1 !== targetCourt.player1Id) ||
+      (nextPlayer3 !== undefined && nextPlayer3 !== targetCourt.player3Id) ||
+      (nextOpponent !== undefined &&
+        nextOpponent !== (targetCourt.opponentName ?? null)) ||
+      (nextOpponentPartner !== undefined &&
+        nextOpponentPartner !== (targetCourt.opponentPartnerName ?? null));
+
+    if (
+      currentlyOccupied &&
+      replacingPlayers &&
+      body?.forceReplace !== true &&
+      action !== "update"
+    ) {
+      // Allow in-place edits via action "update"; block accidental overwrite
+      // when using the add-match form (no action).
+      if (!action) {
+        return NextResponse.json(
+          {
+            error: `${targetCourt.name} already has a match. Clear it first, then add a new one.`,
+          },
+          { status: 409 }
+        );
+      }
     }
 
+    const now = new Date();
     const updatePayload: Partial<typeof courts.$inferInsert> = {
-      updatedAt: new Date(),
-    };
-    if (status) updatePayload.status = status;
-
-    const nextSlots: Record<PlayerSlot, number | null> = {
-      player1Id: targetCourt.player1Id,
-      player2Id: targetCourt.player2Id,
-      player3Id: targetCourt.player3Id,
-      player4Id: targetCourt.player4Id,
+      updatedAt: now,
+      player2Id: null,
+      player4Id: null,
     };
 
-    for (const slot of PLAYER_SLOTS) {
-      const value = readPlayerId(body?.[slot]);
-      if (value !== undefined) {
-        nextSlots[slot] = value;
-        updatePayload[slot] = value;
+    if (status) {
+      updatePayload.status = status;
+      if (status !== targetCourt.status) {
+        updatePayload.statusChangedAt = now;
       }
     }
 
-    if ((status === "Open" || status === "Maintenance") && body?.clearPlayers === true) {
-      for (const slot of PLAYER_SLOTS) {
-        nextSlots[slot] = null;
-        updatePayload[slot] = null;
+    const resolvedPlayer1 =
+      nextPlayer1 !== undefined ? nextPlayer1 : targetCourt.player1Id;
+    const resolvedPlayer3 =
+      nextPlayer3 !== undefined ? nextPlayer3 : targetCourt.player3Id;
+
+    if (nextPlayer1 !== undefined) {
+      updatePayload.player1Id = nextPlayer1;
+      // Mark moved if this player was already on a different court
+      if (nextPlayer1 != null) {
+        const previousCourt = allCourts.find(
+          (c) =>
+            c.id !== courtId &&
+            (c.player1Id === nextPlayer1 || c.player3Id === nextPlayer1)
+        );
+        updatePayload.player1MovedAt = previousCourt ? now : null;
+      } else {
+        updatePayload.player1MovedAt = null;
       }
+    }
+
+    if (nextPlayer3 !== undefined) {
+      updatePayload.player3Id = nextPlayer3;
+      if (nextPlayer3 != null) {
+        const previousCourt = allCourts.find(
+          (c) =>
+            c.id !== courtId &&
+            (c.player1Id === nextPlayer3 || c.player3Id === nextPlayer3)
+        );
+        updatePayload.player3MovedAt = previousCourt ? now : null;
+      } else {
+        updatePayload.player3MovedAt = null;
+      }
+    }
+
+    if (nextOpponent !== undefined) {
+      updatePayload.opponentName = nextOpponent;
+    }
+    if (nextOpponentPartner !== undefined) {
+      updatePayload.opponentPartnerName = nextOpponentPartner;
+    }
+
+    // New live match without an existing clock starts now
+    const willBeLive =
+      (status && LIVE_STATUSES.has(status)) ||
+      (!status && LIVE_STATUSES.has(targetCourt.status));
+    if (
+      willBeLive &&
+      !targetCourt.statusChangedAt &&
+      updatePayload.statusChangedAt === undefined
+    ) {
+      updatePayload.statusChangedAt = now;
+    }
+
+    if (assigningMatch && !status && targetCourt.status === "Open") {
+      updatePayload.status = "In Progress";
+      updatePayload.statusChangedAt = now;
     }
 
     // A player can only be on one court, and only once on that court.
@@ -136,8 +305,8 @@ export const PATCH = async (request: NextRequest) => {
         courtName: c.name,
         playerIds:
           c.id === courtId
-            ? Object.values(nextSlots)
-            : [c.player1Id, c.player2Id, c.player3Id, c.player4Id],
+            ? [resolvedPlayer1, resolvedPlayer3]
+            : [c.player1Id, c.player3Id],
       }))
     );
 

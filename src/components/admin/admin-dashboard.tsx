@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useRef } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import {
   Upload,
@@ -8,12 +8,14 @@ import {
   Download,
   CheckCircle2,
   AlertCircle,
-  Search,
   Save,
-  RotateCcw,
-  Sparkles,
+  Mail,
+  Copy,
+  Trash2,
+  Users,
+  Plus,
 } from "lucide-react";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -25,140 +27,407 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import type { AdminCourtDTO, AdminPlayerDTO } from "@/lib/queries";
-import type { CourtZone, MatchStatus } from "@/db/schema";
+import type {
+  AdminCourtDTO,
+  AdminPlayerDTO,
+  DeskSettingsDTO,
+} from "@/lib/queries";
+import type { MatchStatus } from "@/db/schema";
 import type { BulkUploadRow } from "@/lib/bulk-upload-types";
+import {
+  buildCoachEmailBody,
+  formatEmailSubject,
+  formatMatchLine,
+} from "@/lib/match-text";
 
 interface AdminDashboardProps {
   initialCourts: AdminCourtDTO[];
   initialPlayers: AdminPlayerDTO[];
+  initialDeskSettings: DeskSettingsDTO;
 }
 
-type ZoneFilterTab =
-  | "All"
-  | "Stadium"
-  | "Hard"
-  | "East Clay"
-  | "Legacy"
-  | "Indoors";
+const SAMPLE_CSV_CONTENT = `court,player,opponent,status,partner,opponentPartner
+Hard 12,Maya Reyes,Jordan Smith,In Progress,,
+East Clay 3,Leo Tran,Ana Perez,In Progress,,
+Stadium Hard,Sam Lee,Chris Davis,Warmup,,
+Hard 1,Ava Chen,Jordan Smith,In Progress,Eli Brooks,Kai Nguyen
+`;
 
-const TAB_TO_ZONE_MAP: Record<Exclude<ZoneFilterTab, "All">, CourtZone> = {
-  Stadium: "Stadium",
-  Hard: "Hard Courts",
-  "East Clay": "East Clay",
-  Legacy: "Legacy",
-  Indoors: "Indoors",
-};
+const LIVE_STATUSES: MatchStatus[] = ["Warmup", "In Progress"];
 
-const MATCH_STATUS_OPTIONS: MatchStatus[] = [
-  "Warmup",
-  "In Progress",
-  "Open",
-  "Maintenance",
-];
-
-// player1Partner / player2Partner are only filled in for doubles.
-const SAMPLE_CSV_CONTENT = `courtName,status,player1,player1Partner,player2,player2Partner
-Stadium Hard,In Progress,Arthur Pendelton,,Carlos Mendoza,
-Stadium Clay,Warmup,Bianca Vance,,Diana Kovacs,
-Hard 1,In Progress,Ethan Blackwood,,Gabriel Sorrento,
-Hard 2,In Progress,Fiona Gallagher,Hannah Lindqvist,Isaac Thornton,Kai Takahashi
-East Clay 1,Warmup,Elena Rostova,,Nadia Petrova,
-Legacy 1,In Progress,Marcus Sterling,,Oliver Whitmore,
-Indoors 1,Maintenance,,,,`;
-
-type PlayerSlotKey = "player1Id" | "player2Id" | "player3Id" | "player4Id";
-
-interface PlayerSelectProps {
-  court: AdminCourtDTO;
-  slot: PlayerSlotKey;
-  label: string;
-  players: AdminPlayerDTO[];
-  courtNameByPlayerId: Map<number, string>;
-  disabled: boolean;
-  onAssign: (slot: PlayerSlotKey, playerId: number | null) => void;
-}
-
-const SLOT_TO_PLAYER = {
-  player1Id: "player1",
-  player2Id: "player2",
-  player3Id: "player3",
-  player4Id: "player4",
-} as const;
-
-const PlayerSelect = ({
-  court,
-  slot,
-  label,
-  players,
-  courtNameByPlayerId,
-  disabled,
-  onAssign,
-}: PlayerSelectProps) => {
-  const assigned = court[SLOT_TO_PLAYER[slot]];
-  const selectId = `${slot}-${court.id}`;
-
-  return (
-    <div>
-      <label
-        htmlFor={selectId}
-        className="mb-1 block text-[11px] font-semibold text-slate-600"
-      >
-        {label}{" "}
-        {assigned && (
-          <span className="font-normal text-brand-700">
-            (Board shows: {assigned.privacyName})
-          </span>
-        )}
-      </label>
-      <select
-        id={selectId}
-        value={court[slot] ?? ""}
-        onChange={(e) => {
-          const val = e.target.value;
-          onAssign(slot, val ? Number(val) : null);
-        }}
-        disabled={disabled}
-        className="h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
-      >
-        <option value="">— Unassigned —</option>
-        {players.map((p) => {
-          const onCourt = courtNameByPlayerId.get(p.id);
-          const elsewhere = onCourt && onCourt !== court.name;
-          return (
-            <option key={p.id} value={p.id}>
-              {p.fullName}
-              {elsewhere ? ` (on ${onCourt})` : ""}
-            </option>
-          );
-        })}
-      </select>
-    </div>
-  );
-};
+const isCourtOccupied = (court: AdminCourtDTO): boolean =>
+  court.player1Id != null ||
+  court.player3Id != null ||
+  Boolean(court.opponentName?.trim()) ||
+  court.status === "Warmup" ||
+  court.status === "In Progress";
 
 export const AdminDashboard = ({
   initialCourts,
   initialPlayers,
+  initialDeskSettings,
 }: AdminDashboardProps) => {
   const [courts, setCourts] = useState<AdminCourtDTO[]>(initialCourts);
   const [players, setPlayers] = useState<AdminPlayerDTO[]>(initialPlayers);
-  const [selectedTab, setSelectedTab] = useState<ZoneFilterTab>("All");
-  const [searchFilter, setSearchFilter] = useState<string>("");
-  const [savingCourtId, setSavingCourtId] = useState<number | null>(null);
+  const [coachEmails, setCoachEmails] = useState<string>(
+    initialDeskSettings.coachEmails
+  );
+  const [mainTab, setMainTab] = useState<"matches" | "roster" | "csv">(
+    "matches"
+  );
   const [bannerMessage, setBannerMessage] = useState<{
     type: "success" | "error";
     text: string;
     details?: string[];
   } | null>(null);
 
-  const [doublesCourtIds, setDoublesCourtIds] = useState<Set<number>>(new Set());
+  // Add match form
+  const [formPlayerId, setFormPlayerId] = useState<string>("");
+  const [formCourtId, setFormCourtId] = useState<string>("");
+  const [formOpponent, setFormOpponent] = useState<string>("");
+  const [formStatus, setFormStatus] = useState<"Warmup" | "In Progress">(
+    "In Progress"
+  );
+  const [formDoubles, setFormDoubles] = useState<boolean>(false);
+  const [formPartnerId, setFormPartnerId] = useState<string>("");
+  const [formOpponentPartner, setFormOpponentPartner] = useState<string>("");
+  const [playerSearch, setPlayerSearch] = useState<string>("");
+  const [partnerSearch, setPartnerSearch] = useState<string>("");
+  const [isSavingMatch, setIsSavingMatch] = useState<boolean>(false);
+  const [savingCourtId, setSavingCourtId] = useState<number | null>(null);
 
-  // CSV upload state (the file is read in the browser before saving)
+  // Roster
+  const [rosterPaste, setRosterPaste] = useState<string>("");
+  const [isSavingRoster, setIsSavingRoster] = useState<boolean>(false);
+  const [removingPlayerId, setRemovingPlayerId] = useState<number | null>(null);
+
+  // Coach emails
+  const [isSavingEmails, setIsSavingEmails] = useState<boolean>(false);
+  const [copyDone, setCopyDone] = useState<boolean>(false);
+
+  // CSV
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [parsedCsvRows, setParsedCsvRows] = useState<BulkUploadRow[]>([]);
   const [csvFileName, setCsvFileName] = useState<string>("");
   const [isUploadingCsv, setIsUploadingCsv] = useState<boolean>(false);
+
+  const applyAdminData = (data: {
+    courts?: AdminCourtDTO[];
+    players?: AdminPlayerDTO[];
+    deskSettings?: DeskSettingsDTO;
+  }) => {
+    if (Array.isArray(data?.courts)) setCourts(data.courts);
+    if (Array.isArray(data?.players)) setPlayers(data.players);
+    if (data?.deskSettings?.coachEmails != null) {
+      setCoachEmails(data.deskSettings.coachEmails);
+    }
+  };
+
+  const liveMatches = useMemo(() => {
+    return courts.filter(
+      (c) =>
+        (c.status === "Warmup" || c.status === "In Progress") &&
+        (c.player1Id != null ||
+          c.player3Id != null ||
+          Boolean(c.opponentName?.trim()))
+    );
+  }, [courts]);
+
+  const courtNameByPlayerId = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const c of courts) {
+      if (c.player1Id) map.set(c.player1Id, c.name);
+      if (c.player3Id) map.set(c.player3Id, c.name);
+    }
+    return map;
+  }, [courts]);
+
+  const emptyCourts = useMemo(
+    () => courts.filter((c) => !isCourtOccupied(c)),
+    [courts]
+  );
+
+  const filteredPlayersForForm = useMemo(() => {
+    const q = playerSearch.trim().toLowerCase();
+    if (!q) return players;
+    return players.filter(
+      (p) =>
+        p.fullName.toLowerCase().includes(q) ||
+        p.privacyName.toLowerCase().includes(q)
+    );
+  }, [players, playerSearch]);
+
+  const filteredPartnersForForm = useMemo(() => {
+    const q = partnerSearch.trim().toLowerCase();
+    const list = players.filter((p) => String(p.id) !== formPlayerId);
+    if (!q) return list;
+    return list.filter(
+      (p) =>
+        p.fullName.toLowerCase().includes(q) ||
+        p.privacyName.toLowerCase().includes(q)
+    );
+  }, [players, partnerSearch, formPlayerId]);
+
+  const matchLinesForEmail = useMemo(() => {
+    return liveMatches.map((m) => ({
+      courtName: m.name,
+      status: m.status,
+      playerPrivacyName: m.player1?.privacyName,
+      partnerPrivacyName: m.player3?.privacyName,
+      opponentName: m.opponentName,
+      opponentPartnerName: m.opponentPartnerName,
+    }));
+  }, [liveMatches]);
+
+  const handleResetForm = () => {
+    setFormPlayerId("");
+    setFormCourtId("");
+    setFormOpponent("");
+    setFormStatus("In Progress");
+    setFormDoubles(false);
+    setFormPartnerId("");
+    setFormOpponentPartner("");
+    setPlayerSearch("");
+    setPartnerSearch("");
+  };
+
+  const handleSaveMatch = async () => {
+    const courtId = Number(formCourtId);
+    const player1Id = Number(formPlayerId);
+    if (!courtId || !player1Id) {
+      setBannerMessage({
+        type: "error",
+        text: "Pick our player and a court.",
+      });
+      return;
+    }
+    if (!formOpponent.trim()) {
+      setBannerMessage({
+        type: "error",
+        text: "Type the opponent's name.",
+      });
+      return;
+    }
+
+    setIsSavingMatch(true);
+    setBannerMessage(null);
+
+    try {
+      const response = await fetch("/api/courts", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          courtId,
+          player1Id,
+          player3Id: formDoubles && formPartnerId ? Number(formPartnerId) : null,
+          opponentName: formOpponent.trim(),
+          opponentPartnerName: formDoubles
+            ? formOpponentPartner.trim() || null
+            : null,
+          status: formStatus,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setBannerMessage({
+          type: "error",
+          text: data?.error ?? "Couldn't save the match.",
+        });
+        return;
+      }
+      applyAdminData(data);
+      handleResetForm();
+      setBannerMessage({ type: "success", text: "Match saved to the board." });
+    } catch {
+      setBannerMessage({
+        type: "error",
+        text: "Couldn't reach the server. Check your connection and try again.",
+      });
+    } finally {
+      setIsSavingMatch(false);
+    }
+  };
+
+  const handleCourtAction = async (
+    courtId: number,
+    payload: Record<string, unknown>
+  ) => {
+    setSavingCourtId(courtId);
+    setBannerMessage(null);
+    try {
+      const response = await fetch("/api/courts", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ courtId, ...payload }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setBannerMessage({
+          type: "error",
+          text: data?.error ?? "Couldn't update that match.",
+        });
+        return;
+      }
+      applyAdminData(data);
+    } catch {
+      setBannerMessage({
+        type: "error",
+        text: "Couldn't reach the server. Check your connection and try again.",
+      });
+    } finally {
+      setSavingCourtId(null);
+    }
+  };
+
+  const handleToggleStatus = (court: AdminCourtDTO) => {
+    const next: MatchStatus =
+      court.status === "Warmup" ? "In Progress" : "Warmup";
+    void handleCourtAction(court.id, { action: "update", status: next });
+  };
+
+  const handleChangeCourt = (court: AdminCourtDTO, toCourtId: string) => {
+    const dest = Number(toCourtId);
+    if (!dest) return;
+    void handleCourtAction(court.id, { action: "move", toCourtId: dest });
+  };
+
+  const handleAddRoster = async () => {
+    if (!rosterPaste.trim()) return;
+    setIsSavingRoster(true);
+    setBannerMessage(null);
+    try {
+      const response = await fetch("/api/admin/roster", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ names: rosterPaste }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setBannerMessage({
+          type: "error",
+          text: data?.error ?? "Couldn't add players.",
+        });
+        return;
+      }
+      applyAdminData(data);
+      setRosterPaste("");
+      const skipped =
+        Array.isArray(data?.skipped) && data.skipped.length > 0
+          ? ` Skipped duplicates: ${data.skipped.join(", ")}.`
+          : "";
+      setBannerMessage({
+        type: "success",
+        text: `Added ${data.addedCount} player${data.addedCount === 1 ? "" : "s"}.${skipped}`,
+      });
+    } catch {
+      setBannerMessage({
+        type: "error",
+        text: "Couldn't reach the server. Check your connection and try again.",
+      });
+    } finally {
+      setIsSavingRoster(false);
+    }
+  };
+
+  const handleRemovePlayer = async (playerId: number) => {
+    setRemovingPlayerId(playerId);
+    setBannerMessage(null);
+    try {
+      const response = await fetch("/api/admin/roster", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ playerId }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setBannerMessage({
+          type: "error",
+          text: data?.error ?? "Couldn't remove that player.",
+        });
+        return;
+      }
+      applyAdminData(data);
+    } catch {
+      setBannerMessage({
+        type: "error",
+        text: "Couldn't reach the server. Check your connection and try again.",
+      });
+    } finally {
+      setRemovingPlayerId(null);
+    }
+  };
+
+  const handleSaveCoachEmails = async () => {
+    setIsSavingEmails(true);
+    setBannerMessage(null);
+    try {
+      const response = await fetch("/api/admin/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ coachEmails }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setBannerMessage({
+          type: "error",
+          text: data?.error ?? "Couldn't save coach emails.",
+        });
+        return;
+      }
+      setCoachEmails(data.coachEmails ?? coachEmails);
+      setBannerMessage({ type: "success", text: "Coach emails saved." });
+    } catch {
+      setBannerMessage({
+        type: "error",
+        text: "Couldn't reach the server. Check your connection and try again.",
+      });
+    } finally {
+      setIsSavingEmails(false);
+    }
+  };
+
+  const parseCoachEmailList = (raw: string): string[] =>
+    raw
+      .split(/[\n,;]+/)
+      .map((e) => e.trim())
+      .filter(Boolean);
+
+  const handleEmailCoaches = () => {
+    const emails = parseCoachEmailList(coachEmails);
+    if (emails.length === 0) {
+      setBannerMessage({
+        type: "error",
+        text: "Paste coach emails in the box below, save them, then try again.",
+      });
+      return;
+    }
+    const boardUrl =
+      typeof window !== "undefined"
+        ? `${window.location.origin}/`
+        : "https://example.com/";
+    const subject = formatEmailSubject();
+    const body = buildCoachEmailBody(matchLinesForEmail, boardUrl);
+    const mailto = `mailto:${emails.join(",")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.location.href = mailto;
+  };
+
+  const handleCopyMatches = async () => {
+    const boardUrl =
+      typeof window !== "undefined"
+        ? `${window.location.origin}/`
+        : "https://example.com/";
+    const body = buildCoachEmailBody(matchLinesForEmail, boardUrl);
+    try {
+      await navigator.clipboard.writeText(body);
+      setCopyDone(true);
+      setTimeout(() => setCopyDone(false), 2000);
+    } catch {
+      setBannerMessage({
+        type: "error",
+        text: "Couldn't copy to the clipboard. Select the text manually.",
+      });
+    }
+  };
 
   const normalizeCsvHeaderRow = (
     rawRow: Record<string, string>
@@ -172,18 +441,24 @@ export const AdminDashboard = ({
 
     return {
       courtName:
-        normalized.courtname || normalized.court || normalized.facilitycourt || "",
-      status: normalized.status || normalized.matchstatus || "Open",
-      player1: normalized.player1 || normalized.p1 || "",
-      player2: normalized.player2 || normalized.p2 || "",
-      player1Partner:
-        normalized.player1partner || normalized.partner1 || normalized.player3 || "",
-      player2Partner:
-        normalized.player2partner || normalized.partner2 || normalized.player4 || "",
-      player1FirstName: normalized.player1firstname || "",
-      player1LastName: normalized.player1lastname || "",
-      player2FirstName: normalized.player2firstname || "",
-      player2LastName: normalized.player2lastname || "",
+        normalized.courtname ||
+        normalized.court ||
+        normalized.facilitycourt ||
+        "",
+      status: normalized.status || normalized.matchstatus || "",
+      player: normalized.player || normalized.player1 || normalized.p1 || "",
+      opponent:
+        normalized.opponent || normalized.player2 || normalized.p2 || "",
+      partner:
+        normalized.partner ||
+        normalized.player1partner ||
+        normalized.player3 ||
+        "",
+      opponentPartner:
+        normalized.opponentpartner ||
+        normalized.player2partner ||
+        normalized.player4 ||
+        "",
     };
   };
 
@@ -205,7 +480,7 @@ export const AdminDashboard = ({
         if (mapped.length === 0) {
           setBannerMessage({
             type: "error",
-            text: "No rows with a court name were found. Check that the file has a courtName column.",
+            text: "No rows with a court name were found. Check that the file has a court column.",
           });
         }
       },
@@ -273,8 +548,7 @@ export const AdminDashboard = ({
         return;
       }
 
-      if (Array.isArray(data?.courts)) setCourts(data.courts);
-      if (Array.isArray(data?.players)) setPlayers(data.players);
+      applyAdminData(data);
 
       const unmatchedText =
         Array.isArray(data?.unmatchedCourts) && data.unmatchedCourts.length > 0
@@ -298,98 +572,8 @@ export const AdminDashboard = ({
     }
   };
 
-  const handleQuickUpdateCourt = async (
-    courtId: number,
-    updates: {
-      status?: MatchStatus;
-      player1Id?: number | null;
-      player2Id?: number | null;
-      player3Id?: number | null;
-      player4Id?: number | null;
-      action?: "clear";
-    }
-  ) => {
-    setSavingCourtId(courtId);
-    setBannerMessage(null);
-
-    try {
-      const response = await fetch("/api/courts", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          courtId,
-          ...updates,
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        setBannerMessage({
-          type: "error",
-          text: data?.error ?? "Failed to update court.",
-        });
-        return;
-      }
-
-      if (Array.isArray(data?.courts)) setCourts(data.courts);
-      if (Array.isArray(data?.players)) setPlayers(data.players);
-    } catch {
-      setBannerMessage({
-        type: "error",
-        text: "Couldn't reach the server. Check your connection and try again.",
-      });
-    } finally {
-      setSavingCourtId(null);
-    }
-  };
-
-  const filteredCourts = useMemo(() => {
-    const query = searchFilter.trim().toLowerCase();
-    return courts.filter((court) => {
-      if (selectedTab !== "All") {
-        const expectedZone = TAB_TO_ZONE_MAP[selectedTab];
-        if (court.zone !== expectedZone) return false;
-      }
-
-      if (!query) return true;
-
-      const matchesName = court.name.toLowerCase().includes(query);
-      const matchesZone = court.zone.toLowerCase().includes(query);
-      const matchesPlayer = [
-        court.player1,
-        court.player2,
-        court.player3,
-        court.player4,
-      ].some((p) => p?.fullName.toLowerCase().includes(query) ?? false);
-
-      return matchesName || matchesZone || matchesPlayer;
-    });
-  }, [courts, selectedTab, searchFilter]);
-
-  // Which court each player is currently on, so the dropdowns can show it.
-  const courtNameByPlayerId = useMemo(() => {
-    const map = new Map<number, string>();
-    for (const c of courts) {
-      for (const id of [c.player1Id, c.player2Id, c.player3Id, c.player4Id]) {
-        if (id) map.set(id, c.name);
-      }
-    }
-    return map;
-  }, [courts]);
-
-  const toggleDoubles = (courtId: number) => {
-    setDoublesCourtIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(courtId)) next.delete(courtId);
-      else next.add(courtId);
-      return next;
-    });
-  };
-
   return (
     <div className="space-y-6 pb-16">
-
-      {/* Status Notification Banner */}
       {bannerMessage && (
         <div
           role="status"
@@ -427,335 +611,612 @@ export const AdminDashboard = ({
         </div>
       )}
 
-      {/* Section 1: Upload the order of play from a CSV file */}
-      <Card className="border-slate-200 bg-white">
-        <CardHeader className="pb-3">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
+      <Tabs
+        value={mainTab}
+        onValueChange={(val) => setMainTab(val as typeof mainTab)}
+      >
+        <TabsList aria-label="Desk sections">
+          <TabsTrigger value="matches">Matches</TabsTrigger>
+          <TabsTrigger value="roster">Roster</TabsTrigger>
+          <TabsTrigger value="csv">CSV upload</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="matches" className="mt-4 space-y-6">
+          {/* Add match */}
+          <Card className="border-slate-200 bg-white">
+            <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-lg font-bold text-slate-900">
-                <FileSpreadsheet className="h-5 w-5 text-brand-600" />
-                Upload the order of play
+                <Plus className="h-5 w-5 text-brand-600" />
+                Add match
               </CardTitle>
-              <CardDescription className="mt-1">
-                Choose a CSV file to preview it here. Nothing changes on the board until you click &ldquo;Save to board&rdquo;. If any row has a problem, nothing is saved and you&apos;ll see what to fix.
+              <CardDescription>
+                Pick our player, a court, and type the opponent. Save puts it on
+                the board in seconds.
               </CardDescription>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleLoadSampleCsvPreview}
-                aria-label="Preview the sample file"
-              >
-                <Sparkles className="h-3.5 w-3.5 text-brand-600" />
-                <span>Preview sample</span>
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleDownloadSampleCsv}
-                aria-label="Download CSV template"
-              >
-                <Download className="h-3.5 w-3.5" />
-                <span>Download template</span>
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-
-        <CardContent className="space-y-4">
-          <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/70 p-6 text-center transition hover:border-brand-500 hover:bg-brand-50/20">
-            <Upload className="h-8 w-8 text-slate-400" aria-hidden="true" />
-            <p className="mt-2 text-sm font-semibold text-slate-800">
-              Choose a CSV file
-            </p>
-            <p className="mt-0.5 text-xs text-slate-500">
-              Columns: <code>courtName, status, player1, player2</code>. For doubles, also fill in <code>player1Partner</code> and <code>player2Partner</code>.
-            </p>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv,text/csv"
-              onChange={handleCsvFileChange}
-              aria-label="Choose a CSV file with the order of play"
-              className="mt-3 block text-xs text-slate-600 file:mr-3 file: cursor-pointer file:rounded-lg file:border-0 file:bg-brand-600 file:px-3.5 file:py-2 file:text-xs file:font-semibold file:text-white hover:file:bg-brand-700"
-            />
-          </div>
-
-          {/* Preview before saving */}
-          {parsedCsvRows.length > 0 && (
-            <div className="space-y-3 rounded-xl border border-brand-200 bg-brand-50/40 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
                 <div>
-                  <h4 className="text-sm font-bold text-slate-900">
-                    Preview ({parsedCsvRows.length} rows from{" "}
-                    <span className="text-brand-700">{csvFileName}</span>)
-                  </h4>
-                  <p className="text-xs text-slate-600">
-                    Check the rows below, then save them to the board.
-                  </p>
+                  <label
+                    htmlFor="add-player-search"
+                    className="mb-1 block text-[11px] font-semibold text-slate-600"
+                  >
+                    Our player
+                  </label>
+                  <Input
+                    id="add-player-search"
+                    type="search"
+                    value={playerSearch}
+                    onChange={(e) => setPlayerSearch(e.target.value)}
+                    placeholder="Type to filter…"
+                    aria-label="Filter roster for our player"
+                    className="mb-1.5 h-9 text-xs"
+                  />
+                  <select
+                    id="add-player"
+                    value={formPlayerId}
+                    onChange={(e) => setFormPlayerId(e.target.value)}
+                    aria-label="Our player"
+                    className="h-10 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+                  >
+                    <option value="">— Pick player —</option>
+                    {filteredPlayersForForm.map((p) => {
+                      const onCourt = courtNameByPlayerId.get(p.id);
+                      return (
+                        <option key={p.id} value={p.id}>
+                          {p.fullName}
+                          {onCourt ? ` (on ${onCourt})` : ""}
+                        </option>
+                      );
+                    })}
+                  </select>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div>
+                  <label
+                    htmlFor="add-court"
+                    className="mb-1 block text-[11px] font-semibold text-slate-600"
+                  >
+                    Court
+                  </label>
+                  <select
+                    id="add-court"
+                    value={formCourtId}
+                    onChange={(e) => setFormCourtId(e.target.value)}
+                    aria-label="Court"
+                    className="mt-0 h-10 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 md:mt-[34px]"
+                  >
+                    <option value="">— Pick court —</option>
+                    {courts.map((c) => {
+                      const occupied = isCourtOccupied(c);
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                          {occupied
+                            ? ` (busy: ${c.player1?.privacyName ?? c.opponentName ?? c.status})`
+                            : ""}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="add-opponent"
+                    className="mb-1 block text-[11px] font-semibold text-slate-600"
+                  >
+                    Opponent
+                  </label>
+                  <Input
+                    id="add-opponent"
+                    value={formOpponent}
+                    onChange={(e) => setFormOpponent(e.target.value)}
+                    placeholder="Jordan Smith"
+                    aria-label="Opponent name"
+                    className="mt-0 h-10 text-sm md:mt-[34px]"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="add-status"
+                    className="mb-1 block text-[11px] font-semibold text-slate-600"
+                  >
+                    Status
+                  </label>
+                  <select
+                    id="add-status"
+                    value={formStatus}
+                    onChange={(e) =>
+                      setFormStatus(e.target.value as "Warmup" | "In Progress")
+                    }
+                    aria-label="Match status"
+                    className="mt-0 h-10 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 md:mt-[34px]"
+                  >
+                    {LIVE_STATUSES.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setFormDoubles((v) => !v)}
+                  className="text-sm font-medium text-brand-700 underline-offset-2 hover:underline"
+                  aria-pressed={formDoubles}
+                >
+                  {formDoubles
+                    ? "Switch back to singles"
+                    : "Add doubles partners"}
+                </button>
+              </div>
+
+              {formDoubles && (
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div>
+                    <label
+                      htmlFor="add-partner-search"
+                      className="mb-1 block text-[11px] font-semibold text-slate-600"
+                    >
+                      Our partner
+                    </label>
+                    <Input
+                      id="add-partner-search"
+                      type="search"
+                      value={partnerSearch}
+                      onChange={(e) => setPartnerSearch(e.target.value)}
+                      placeholder="Type to filter…"
+                      aria-label="Filter roster for our partner"
+                      className="mb-1.5 h-9 text-xs"
+                    />
+                    <select
+                      id="add-partner"
+                      value={formPartnerId}
+                      onChange={(e) => setFormPartnerId(e.target.value)}
+                      aria-label="Our partner"
+                      className="h-10 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+                    >
+                      <option value="">— Optional partner —</option>
+                      {filteredPartnersForForm.map((p) => {
+                        const onCourt = courtNameByPlayerId.get(p.id);
+                        return (
+                          <option key={p.id} value={p.id}>
+                            {p.fullName}
+                            {onCourt ? ` (on ${onCourt})` : ""}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="add-opp-partner"
+                      className="mb-1 block text-[11px] font-semibold text-slate-600"
+                    >
+                      Opponent&apos;s partner
+                    </label>
+                    <Input
+                      id="add-opp-partner"
+                      value={formOpponentPartner}
+                      onChange={(e) => setFormOpponentPartner(e.target.value)}
+                      placeholder="Ana Perez"
+                      aria-label="Opponent partner name"
+                      className="mt-0 h-10 text-sm md:mt-[34px]"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  onClick={() => void handleSaveMatch()}
+                  disabled={isSavingMatch}
+                  aria-label="Save match to board"
+                >
+                  <Save className="h-3.5 w-3.5" />
+                  <span>{isSavingMatch ? "Saving…" : "Save match"}</span>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Live matches + email */}
+          <Card className="border-slate-200 bg-white">
+            <CardHeader className="pb-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <CardTitle className="text-lg font-bold text-slate-900">
+                    Our matches right now ({liveMatches.length})
+                  </CardTitle>
+                  <CardDescription>
+                    Change court, flip status, or clear a match off the board.
+                  </CardDescription>
+                </div>
+                <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => {
-                      setParsedCsvRows([]);
-                      setCsvFileName("");
-                    }}
+                    onClick={handleEmailCoaches}
+                    aria-label="Email coaches"
                   >
-                    Cancel
+                    <Mail className="h-3.5 w-3.5" />
+                    <span>Email coaches</span>
                   </Button>
                   <Button
                     type="button"
+                    variant="outline"
                     size="sm"
-                    onClick={handleSaveCsvToBoard}
-                    disabled={isUploadingCsv}
+                    onClick={() => void handleCopyMatches()}
+                    aria-label="Copy matches"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    <span>{copyDone ? "Copied!" : "Copy matches"}</span>
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {liveMatches.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                  No matches on the board yet. Add one above.
+                </p>
+              ) : (
+                <ul className="space-y-2" aria-label="Live matches">
+                  {liveMatches.map((match) => {
+                    const isSaving = savingCourtId === match.id;
+                    const line = formatMatchLine({
+                      courtName: match.name,
+                      status: match.status,
+                      playerPrivacyName: match.player1?.privacyName,
+                      partnerPrivacyName: match.player3?.privacyName,
+                      opponentName: match.opponentName,
+                      opponentPartnerName: match.opponentPartnerName,
+                    });
+                    return (
+                      <li
+                        key={match.id}
+                        className={cn(
+                          "flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between",
+                          isSaving && "opacity-60"
+                        )}
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-slate-900">
+                            {line}
+                          </p>
+                          <Badge
+                            variant={
+                              match.status === "Warmup"
+                                ? "warmup"
+                                : "inProgress"
+                            }
+                            className="mt-1"
+                          >
+                            {match.status}
+                          </Badge>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label className="sr-only" htmlFor={`move-${match.id}`}>
+                            Change court for {match.name}
+                          </label>
+                          <select
+                            id={`move-${match.id}`}
+                            value=""
+                            disabled={isSaving || emptyCourts.length === 0}
+                            onChange={(e) => {
+                              handleChangeCourt(match, e.target.value);
+                              e.target.value = "";
+                            }}
+                            aria-label={`Change court for ${match.name}`}
+                            className="h-8 rounded-lg border border-slate-300 bg-white px-2 text-xs text-slate-800"
+                          >
+                            <option value="">Change court…</option>
+                            {emptyCourts.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                              </option>
+                            ))}
+                          </select>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isSaving}
+                            onClick={() => handleToggleStatus(match)}
+                            aria-label={`Change status for ${match.name}`}
+                            className="h-8"
+                          >
+                            {match.status === "Warmup"
+                              ? "→ In Progress"
+                              : "→ Warmup"}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isSaving}
+                            onClick={() =>
+                              void handleCourtAction(match.id, {
+                                action: "clear",
+                              })
+                            }
+                            aria-label={`Clear ${match.name}`}
+                            className="h-8 text-rose-700 hover:border-rose-300 hover:bg-rose-50"
+                          >
+                            Clear
+                          </Button>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+                <label
+                  htmlFor="coach-emails"
+                  className="mb-1 block text-sm font-semibold text-slate-800"
+                >
+                  Coach emails
+                </label>
+                <p className="mb-2 text-xs text-slate-500">
+                  Paste once (comma or new line). Saved here so the desk can
+                  email everyone with one click. Opens Outlook or Gmail on this
+                  laptop.
+                </p>
+                <textarea
+                  id="coach-emails"
+                  value={coachEmails}
+                  onChange={(e) => setCoachEmails(e.target.value)}
+                  rows={3}
+                  placeholder={"coach1@school.edu\ncoach2@school.edu"}
+                  aria-label="Coach email addresses"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+                />
+                <div className="mt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleSaveCoachEmails()}
+                    disabled={isSavingEmails}
+                    aria-label="Save coach emails"
                   >
                     <Save className="h-3.5 w-3.5" />
                     <span>
-                      {isUploadingCsv
-                        ? "Saving…"
-                        : `Save ${parsedCsvRows.length} rows to board`}
+                      {isSavingEmails ? "Saving…" : "Save coach emails"}
                     </span>
                   </Button>
                 </div>
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-              <div className="max-h-56 overflow-auto rounded-lg border border-slate-200 bg-white">
-                <table className="w-full text-left text-xs">
-                  <thead className="border-b border-slate-200 bg-slate-50 font-semibold uppercase text-slate-600">
-                    <tr>
-                      <th className="px-3 py-2">Court Name</th>
-                      <th className="px-3 py-2">Status</th>
-                      <th className="px-3 py-2">Team A / Player 1</th>
-                      <th className="px-3 py-2">Team B / Player 2</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {parsedCsvRows.map((row, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50">
-                        <td className="px-3 py-2 font-semibold text-slate-900">
-                          {row.courtName}
-                        </td>
-                        <td className="px-3 py-2">{row.status || "Open"}</td>
-                        <td className="px-3 py-2 text-slate-700">
-                          {[row.player1, row.player1Partner].filter(Boolean).join(" / ") || "—"}
-                        </td>
-                        <td className="px-3 py-2 text-slate-700">
-                          {[row.player2, row.player2Partner].filter(Boolean).join(" / ") || "—"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Section 2: Quick-Edit Court Controls (49 Courts) */}
-      <Card className="border-slate-200 bg-white">
-        <CardHeader className="pb-4">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <CardTitle className="text-lg font-bold text-slate-900">
-                Edit courts ({courts.length} courts, {players.length} players)
+        <TabsContent value="roster" className="mt-4">
+          <Card className="border-slate-200 bg-white">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-lg font-bold text-slate-900">
+                <Users className="h-5 w-5 text-brand-600" />
+                Roster ({players.length})
               </CardTitle>
               <CardDescription>
-                Change a court&apos;s status, assign players, or clear it. The live board shows first name and last initial only. A player can only be on one court at a time.
+                Paste names one per line to add our players. Setup is done once
+                at the start of the event. Opponents are typed as free text on
+                matches — they are not on this list.
               </CardDescription>
-            </div>
-
-            <div className="relative w-full lg:w-80">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <Input
-                type="search"
-                value={searchFilter}
-                onChange={(e) => setSearchFilter(e.target.value)}
-                placeholder="Filter by court or player name..."
-                aria-label="Filter courts by name or assigned player"
-                className="h-9 pl-9 text-xs sm:text-sm"
-              />
-            </div>
-          </div>
-
-          <div className="mt-3 overflow-x-auto pb-1">
-            <Tabs
-              value={selectedTab}
-              onValueChange={(val) => setSelectedTab(val as ZoneFilterTab)}
-            >
-              <TabsList aria-label="Filter admin courts by zone">
-                <TabsTrigger value="All">All (49)</TabsTrigger>
-                <TabsTrigger value="Stadium">Stadium (2)</TabsTrigger>
-                <TabsTrigger value="Hard">Hard (28)</TabsTrigger>
-                <TabsTrigger value="East Clay">East Clay (9)</TabsTrigger>
-                <TabsTrigger value="Legacy">Legacy (6)</TabsTrigger>
-                <TabsTrigger value="Indoors">Indoors (4)</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </div>
-        </CardHeader>
-
-        <CardContent>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {filteredCourts.map((court) => {
-              const isSaving = savingCourtId === court.id;
-
-              return (
-                <div
-                  key={court.id}
-                  className={cn(
-                    "flex flex-col justify-between rounded-xl border p-3.5 transition-all",
-                    court.status === "In Progress" &&
-                      "border-brand-200 bg-brand-50/20",
-                    court.status === "Warmup" &&
-                      "border-amber-200 bg-amber-50/20",
-                    court.status === "Open" && "border-slate-200 bg-white",
-                    court.status === "Maintenance" &&
-                      "border-rose-200 bg-rose-50/20",
-                    isSaving && "opacity-60 pointer-events-none"
-                  )}
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <label
+                  htmlFor="roster-paste"
+                  className="mb-1 block text-[11px] font-semibold text-slate-600"
                 >
-                  <div>
-                    {/* Court Header + Clear Button */}
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                          #{court.sortOrder} • {court.zone}
-                        </span>
-                        <h3 className="text-base font-bold text-slate-900">
-                          {court.name}
-                        </h3>
-                      </div>
+                  Paste names
+                </label>
+                <textarea
+                  id="roster-paste"
+                  value={rosterPaste}
+                  onChange={(e) => setRosterPaste(e.target.value)}
+                  rows={5}
+                  placeholder={"Maya Reyes\nLeo Tran\nSam Lee"}
+                  aria-label="Paste roster names one per line"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+                />
+                <Button
+                  type="button"
+                  className="mt-2"
+                  onClick={() => void handleAddRoster()}
+                  disabled={isSavingRoster || !rosterPaste.trim()}
+                  aria-label="Add pasted names to roster"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>
+                    {isSavingRoster ? "Adding…" : "Add to roster"}
+                  </span>
+                </Button>
+              </div>
 
-                      <div className="flex items-center gap-1.5">
-                        <Badge
-                          variant={
-                            court.status === "In Progress"
-                              ? "inProgress"
-                              : court.status === "Warmup"
-                              ? "warmup"
-                              : court.status === "Maintenance"
-                              ? "maintenance"
-                              : "open"
-                          }
-                        >
-                          {court.status}
-                        </Badge>
+              {players.length === 0 ? (
+                <p className="text-sm text-slate-500">
+                  No players yet. Paste the team roster above.
+                </p>
+              ) : (
+                <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200">
+                  {players.map((p) => {
+                    const onCourt = courtNameByPlayerId.get(p.id);
+                    return (
+                      <li
+                        key={p.id}
+                        className="flex items-center justify-between gap-3 px-3 py-2.5"
+                      >
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">
+                            {p.fullName}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            Board shows: {p.privacyName}
+                            {onCourt ? ` · on ${onCourt}` : ""}
+                          </p>
+                        </div>
                         <Button
                           type="button"
                           variant="outline"
                           size="sm"
-                          onClick={() =>
-                            void handleQuickUpdateCourt(court.id, {
-                              action: "clear",
-                            })
-                          }
-                          disabled={isSaving}
-                          aria-label={`Clear ${court.name}`}
-                          className="h-7 px-2 text-xs text-slate-600 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700"
+                          disabled={removingPlayerId === p.id}
+                          onClick={() => void handleRemovePlayer(p.id)}
+                          aria-label={`Remove ${p.fullName} from roster`}
+                          className="text-rose-700 hover:border-rose-300 hover:bg-rose-50"
                         >
-                          <RotateCcw className="h-3 w-3" />
-                          <span>Clear</span>
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span>Remove</span>
                         </Button>
-                      </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="csv" className="mt-4">
+          <Card className="border-slate-200 bg-white">
+            <CardHeader className="pb-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-lg font-bold text-slate-900">
+                    <FileSpreadsheet className="h-5 w-5 text-brand-600" />
+                    Upload the order of play
+                  </CardTitle>
+                  <CardDescription className="mt-1">
+                    Columns:{" "}
+                    <code>court, player, opponent, status, partner, opponentPartner</code>
+                    . Player and partner must already be on the roster.
+                  </CardDescription>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleLoadSampleCsvPreview}
+                    aria-label="Preview the sample file"
+                  >
+                    <span>Preview sample</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDownloadSampleCsv}
+                    aria-label="Download CSV template"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    <span>Download template</span>
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/70 p-6 text-center transition hover:border-brand-500 hover:bg-brand-50/20">
+                <Upload className="h-8 w-8 text-slate-400" aria-hidden="true" />
+                <p className="mt-2 text-sm font-semibold text-slate-800">
+                  Choose a CSV file
+                </p>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={handleCsvFileChange}
+                  aria-label="Choose a CSV file with the order of play"
+                  className="mt-3 block text-xs text-slate-600 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-brand-600 file:px-3.5 file:py-2 file:text-xs file:font-semibold file:text-white hover:file:bg-brand-700"
+                />
+              </div>
+
+              {parsedCsvRows.length > 0 && (
+                <div className="space-y-3 rounded-xl border border-brand-200 bg-brand-50/40 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-900">
+                        Preview ({parsedCsvRows.length} rows from{" "}
+                        <span className="text-brand-700">{csvFileName}</span>)
+                      </h4>
                     </div>
-
-                    {/* Controls Form */}
-                    <div className="mt-3 space-y-2.5">
-                      {/* Match Status Select */}
-                      <div>
-                        <label
-                          htmlFor={`status-${court.id}`}
-                          className="mb-1 block text-[11px] font-semibold text-slate-600"
-                        >
-                          Match Status
-                        </label>
-                        <select
-                          id={`status-${court.id}`}
-                          value={court.status}
-                          onChange={(e) =>
-                            void handleQuickUpdateCourt(court.id, {
-                              status: e.target.value as MatchStatus,
-                            })
-                          }
-                          disabled={isSaving}
-                          aria-label={`Match status for ${court.name}`}
-                          className="h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
-                        >
-                          {MATCH_STATUS_OPTIONS.map((statusOption) => (
-                            <option key={statusOption} value={statusOption}>
-                              {statusOption}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {(() => {
-                        const showDoubles =
-                          doublesCourtIds.has(court.id) ||
-                          Boolean(court.player3Id || court.player4Id);
-                        const assign = (slot: PlayerSlotKey, playerId: number | null) =>
-                          void handleQuickUpdateCourt(court.id, {
-                            ...({ [slot]: playerId } as Partial<
-                              Record<PlayerSlotKey, number | null>
-                            >),
-                            status:
-                              playerId && court.status === "Open" ? "Warmup" : undefined,
-                          });
-                        const shared = {
-                          court,
-                          players,
-                          courtNameByPlayerId,
-                          disabled: isSaving,
-                          onAssign: assign,
-                        };
-
-                        return (
-                          <>
-                            <PlayerSelect
-                              {...shared}
-                              slot="player1Id"
-                              label={showDoubles ? "Team A, player 1" : "Player 1"}
-                            />
-                            {showDoubles && (
-                              <PlayerSelect {...shared} slot="player3Id" label="Team A, partner" />
-                            )}
-                            <PlayerSelect
-                              {...shared}
-                              slot="player2Id"
-                              label={showDoubles ? "Team B, player 1" : "Player 2"}
-                            />
-                            {showDoubles && (
-                              <PlayerSelect {...shared} slot="player4Id" label="Team B, partner" />
-                            )}
-                            {!(court.player3Id || court.player4Id) && (
-                              <button
-                                type="button"
-                                onClick={() => toggleDoubles(court.id)}
-                                className="text-xs font-medium text-brand-700 underline-offset-2 hover:underline"
-                              >
-                                {showDoubles ? "Switch back to singles" : "Make this a doubles match"}
-                              </button>
-                            )}
-                          </>
-                        );
-                      })()}
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setParsedCsvRows([]);
+                          setCsvFileName("");
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => void handleSaveCsvToBoard()}
+                        disabled={isUploadingCsv}
+                      >
+                        <Save className="h-3.5 w-3.5" />
+                        <span>
+                          {isUploadingCsv
+                            ? "Saving…"
+                            : `Save ${parsedCsvRows.length} rows to board`}
+                        </span>
+                      </Button>
                     </div>
                   </div>
+                  <div className="max-h-56 overflow-auto rounded-lg border border-slate-200 bg-white">
+                    <table className="w-full text-left text-xs">
+                      <thead className="border-b border-slate-200 bg-slate-50 font-semibold uppercase text-slate-600">
+                        <tr>
+                          <th className="px-3 py-2">Court</th>
+                          <th className="px-3 py-2">Status</th>
+                          <th className="px-3 py-2">Our side</th>
+                          <th className="px-3 py-2">Opponent</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {parsedCsvRows.map((row, idx) => (
+                          <tr key={idx} className="hover:bg-slate-50">
+                            <td className="px-3 py-2 font-semibold text-slate-900">
+                              {row.courtName}
+                            </td>
+                            <td className="px-3 py-2">
+                              {row.status || "In Progress"}
+                            </td>
+                            <td className="px-3 py-2 text-slate-700">
+                              {[row.player, row.partner]
+                                .filter(Boolean)
+                                .join(" / ") || "—"}
+                            </td>
+                            <td className="px-3 py-2 text-slate-700">
+                              {[row.opponent, row.opponentPartner]
+                                .filter(Boolean)
+                                .join(" / ") || "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };

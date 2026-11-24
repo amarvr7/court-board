@@ -1,70 +1,77 @@
-# ITC Court Board
+# ITC Ascender Court Board
 
-Live court assignments for the International Tennis Championship at IMG Academy.
-Students, coaches, and parents enter the event PIN to see which court each player
-is on. The tournament desk updates courts from the admin page.
+Live court assignments for the Ascender team at the International Tennis
+Championship (IMG Academy). Staff and players enter the Team PIN to see which
+court each of our players is on. The desk coach updates matches from a laptop
+and can email all coaches with one click.
 
 ## Pages
 
-- `/` — event overview
-- `/board` — live board (event PIN required). Names show as first name + last initial.
-- `/admin` — tournament desk (admin password required). Edit courts one at a time or
-  upload the whole order of play from a CSV file.
+- `/` — live board (Team PIN required). Shows only our matches. Names are first
+  name + last initial. The Ascender logo appears next to each of our players.
+- `/admin` — desk (admin password required). Add matches, manage the roster,
+  email coaches, or upload a CSV.
+- `/board` — redirects to `/`.
 
 ## First-time setup
 
 1. Install Node.js 20 or newer.
 2. In this folder, run `npm install`.
 3. Copy `.env.example` to `.env.local` and fill in every value.
-4. Create the tables: `npm run db:push`
-5. Optional, for testing only: `npm run db:seed` loads 49 courts and 60 fake players.
-   It **deletes everything first** and asks you to type `RESET` to confirm.
-   Never run it on the live event database.
-6. Start the app: `npm run dev`, then open http://localhost:3000
+4. Create / update the tables: `npm run db:push`
+5. Optional, if this database already had opponents stored as player records:
+   `npm run db:migrate-opponents` (copies those names into text fields; does not
+   delete players).
+6. Optional, for testing only: `npm run db:seed` loads 49 courts and a short
+   sample Ascender roster. It **deletes everything first** and asks you to type
+   `RESET` to confirm. Never run it on the live event database.
+7. Start the app: `npm run dev`, then open http://localhost:3000
 
-## Already have a database from the first version?
+## Desk workflow
 
-The second Stadium court was renamed from "Clay Hard" to "Stadium Clay".
-Run this once to rename it without losing any assignments:
+1. **Roster (once)** — open Desk → Roster. Paste our players, one name per line.
+   Remove anyone with one click (clear their match first if they are on a court).
+2. **Add match** — pick our player → pick court → type the opponent → Save.
+   Optional doubles: our partner (roster) + opponent's partner (text).
+3. **Our matches right now** — Change court, flip Warmup / In Progress, or Clear.
+4. **Coach emails** — paste coach addresses once and Save. **Email coaches**
+   opens Outlook or Gmail on this laptop (`mailto:`). **Copy matches** pastes
+   the same list into a group text or WhatsApp.
+5. Email / copy lines use the same short names as the board
+   (`Maya R. – Hard 12 vs Jordan S. (In Progress)`), then the board link and a
+   Team PIN reminder (digits are not included).
 
-```bash
-npm run db:rename-stadium
-```
+A player can only be on one court. Opponents are free text and may appear on
+more than one court.
 
-## CSV format for the order of play
+## CSV format (optional)
 
 | Column | Required | Notes |
 | --- | --- | --- |
-| `courtName` | Yes | Must match a court name exactly, e.g. `Hard 12`, `Stadium Clay` |
-| `status` | No | `Warmup`, `In Progress`, `Open`, or `Maintenance`. Blank = In Progress if players are listed, otherwise Open |
-| `player1` | No | Full name, e.g. `Arthur Pendelton` |
-| `player2` | No | Opponent's full name |
-| `player1Partner` | Doubles only | Partner of player 1 (Team A) |
-| `player2Partner` | Doubles only | Partner of player 2 (Team B) |
+| `court` | Yes | Must match a court name exactly, e.g. `Hard 12` |
+| `player` | Usually | Our player — must already be on the roster |
+| `opponent` | Usually | Free text, e.g. `Jordan Smith` |
+| `status` | No | `Warmup` or `In Progress` (also accepts `Open` / `Maintenance`) |
+| `partner` | Doubles | Our partner — must already be on the roster |
+| `opponentPartner` | Doubles | Opponent's partner, free text |
 
-Rules the upload checks before saving anything:
+If any row has a problem, nothing is saved and the desk lists what to fix.
+Download a template from Desk → CSV upload.
 
-- A player can only be on one court. If a player is still on another court that
-  isn't in the file, clear that court first or include it in the file.
-- Two different players with the exact same name are treated as one person.
-  Add a middle initial to one of them (e.g. `Sam J. Lee`) to tell them apart.
-- If any row has a problem, nothing is saved and the admin page lists what to fix.
+## Logos
 
-Download a template from the admin page.
-
-## Logo
-
-Put the IMG Academy Tennis wordmark at
-`public/brand/IMGA_Tennis_Wordmark_Black_Blue.jpg` and the header shows it automatically.
+- IMG Academy Tennis wordmark:
+  `public/brand/IMGA_Tennis_Wordmark_Black_Blue.jpg` (header)
+- Ascender mark: `public/brand/ascender-logo.png` (next to our players on the board)
 
 ## Security notes
 
-- The board PIN and admin password are both slowed down and limited after repeated
-  wrong tries. The limits are counted per network, so a whole venue Wi-Fi shares them.
-  Limits reset if the server restarts.
-- Board and admin cookies are signed with `ADMIN_SESSION_SECRET`, so they can't be faked.
-- Changing `EVENT_PIN` signs every device out of the board. Changing `ADMIN_PASSWORD`
-  signs every admin out.
+- The Team PIN (`EVENT_PIN`) and admin password are both slowed down and limited
+  after repeated wrong tries. The limits are counted per network, so a whole
+  venue Wi-Fi shares them. Limits reset if the server restarts.
+- Board and admin cookies are signed with `ADMIN_SESSION_SECRET`.
+- Changing `EVENT_PIN` signs every device out of the board. Changing
+  `ADMIN_PASSWORD` signs every admin out.
 
 ## Going live
 

@@ -24,17 +24,13 @@ const normalizeStatus = (raw?: string): MatchStatus | null => {
   return VALID_STATUSES.get(raw.trim().toLowerCase()) ?? null;
 };
 
-interface ResolvedName {
-  key: PlayerKey; // existing player id, or "new:<full name>" for a new player
-  fullName: string;
-  firstName: string;
-  lastName: string;
-}
-
 interface PlannedCourtUpdate {
   court: Court;
   status: MatchStatus;
-  slots: [ResolvedName | null, ResolvedName | null, ResolvedName | null, ResolvedName | null];
+  player1Id: number | null;
+  player3Id: number | null;
+  opponentName: string | null;
+  opponentPartnerName: string | null;
 }
 
 export const POST = async (request: NextRequest) => {
@@ -61,29 +57,18 @@ export const POST = async (request: NextRequest) => {
       existingPlayers.map((p) => [p.fullName.toLowerCase().trim(), p])
     );
 
-    const resolveName = (
-      fullNameRaw?: string,
-      firstRaw?: string,
-      lastRaw?: string
-    ): ResolvedName | null => {
-      const combined =
-        firstRaw && firstRaw.trim()
-          ? `${firstRaw.trim()} ${(lastRaw ?? "").trim()}`
-          : (fullNameRaw ?? "").trim();
-      if (!combined.trim()) return null;
-
-      const parsed = parseFullName(combined);
+    const resolveRosterPlayer = (
+      raw?: string
+    ): { id: number; fullName: string } | null | "missing" => {
+      const trimmed = (raw ?? "").trim();
+      if (!trimmed) return null;
+      const parsed = parseFullName(trimmed);
       if (!parsed.firstName) return null;
-
-      const lookupKey = parsed.fullName.toLowerCase();
-      const existing = playerByFullName.get(lookupKey);
-      return {
-        key: existing ? existing.id : `new:${lookupKey}`,
-        ...parsed,
-      };
+      const existing = playerByFullName.get(parsed.fullName.toLowerCase());
+      if (!existing) return "missing";
+      return { id: existing.id, fullName: existing.fullName };
     };
 
-    // ---- Pass 1: read every row and check it, without writing anything ----
     const unmatchedCourts: string[] = [];
     const problems: string[] = [];
     const planned = new Map<number, PlannedCourtUpdate>();
@@ -103,11 +88,29 @@ export const POST = async (request: NextRequest) => {
         continue;
       }
 
-      const sideA = resolveName(row.player1, row.player1FirstName, row.player1LastName);
-      const sideB = resolveName(row.player2, row.player2FirstName, row.player2LastName);
-      const sideAPartner = resolveName(row.player1Partner);
-      const sideBPartner = resolveName(row.player2Partner);
-      const hasPlayers = Boolean(sideA || sideB || sideAPartner || sideBPartner);
+      const ourPlayer = resolveRosterPlayer(row.player);
+      const ourPartner = resolveRosterPlayer(row.partner);
+
+      if (ourPlayer === "missing") {
+        problems.push(
+          `${court.name}: "${row.player}" is not on the roster. Add them on the Roster tab first.`
+        );
+        continue;
+      }
+      if (ourPartner === "missing") {
+        problems.push(
+          `${court.name}: partner "${row.partner}" is not on the roster. Add them on the Roster tab first.`
+        );
+        continue;
+      }
+
+      const opponentName = (row.opponent ?? "").trim().replace(/\s+/g, " ") || null;
+      const opponentPartnerName =
+        (row.opponentPartner ?? "").trim().replace(/\s+/g, " ") || null;
+
+      const hasMatch = Boolean(
+        ourPlayer || ourPartner || opponentName || opponentPartnerName
+      );
 
       let status = normalizeStatus(row.status);
       if (row.status && row.status.trim() && !status) {
@@ -116,24 +119,21 @@ export const POST = async (request: NextRequest) => {
         );
         continue;
       }
-      if (!status) status = hasPlayers ? "In Progress" : "Open";
+      if (!status) status = hasMatch ? "In Progress" : "Open";
 
       planned.set(court.id, {
         court,
         status,
-        slots: [sideA, sideB, sideAPartner, sideBPartner],
+        player1Id: ourPlayer?.id ?? null,
+        player3Id: ourPartner?.id ?? null,
+        opponentName,
+        opponentPartnerName,
       });
     }
 
-    // ---- Check that nobody ends up on two courts once the file is applied ----
     const displayNameByKey = new Map<PlayerKey, string>(
       existingPlayers.map((p) => [p.id, p.fullName])
     );
-    for (const plan of planned.values()) {
-      for (const slot of plan.slots) {
-        if (slot) displayNameByKey.set(slot.key, slot.fullName);
-      }
-    }
 
     const conflicts = findAssignmentConflicts(
       existingCourts.map((c) => {
@@ -141,8 +141,8 @@ export const POST = async (request: NextRequest) => {
         return {
           courtName: c.name,
           playerIds: plan
-            ? plan.slots.map((s) => s?.key ?? null)
-            : [c.player1Id, c.player2Id, c.player3Id, c.player4Id],
+            ? [plan.player1Id, plan.player3Id]
+            : [c.player1Id, c.player3Id],
         };
       })
     );
@@ -154,7 +154,7 @@ export const POST = async (request: NextRequest) => {
         problems.push(`${name} is listed twice on ${uniqueCourts[0]}.`);
       } else {
         problems.push(
-          `${name} would be on ${uniqueCourts.join(" and ")}. If that's two different players with the same name, add a middle initial to one of them. If they moved courts, clear the old court or include it in the file.`
+          `${name} would be on ${uniqueCourts.join(" and ")}. Clear the old court or include it in the file.`
         );
       }
     }
@@ -170,38 +170,24 @@ export const POST = async (request: NextRequest) => {
       );
     }
 
-    // ---- Pass 2: create new players, then save the courts ----
-    const createdIdByKey = new Map<PlayerKey, number>();
-    const getPlayerId = async (slot: ResolvedName | null): Promise<number | null> => {
-      if (!slot) return null;
-      if (typeof slot.key === "number") return slot.key;
-      const already = createdIdByKey.get(slot.key);
-      if (already) return already;
-
-      const [created] = await db
-        .insert(players)
-        .values({
-          firstName: slot.firstName,
-          lastName: slot.lastName,
-          fullName: slot.fullName,
-        })
-        .returning();
-      createdIdByKey.set(slot.key, created.id);
-      return created.id;
-    };
-
+    const now = new Date();
     let updatedCourtsCount = 0;
     for (const plan of planned.values()) {
-      const [p1, p2, p3, p4] = await Promise.all(plan.slots.map(getPlayerId));
+      const isLive = plan.status === "Warmup" || plan.status === "In Progress";
       await db
         .update(courts)
         .set({
           status: plan.status,
-          player1Id: p1,
-          player2Id: p2,
-          player3Id: p3,
-          player4Id: p4,
-          updatedAt: new Date(),
+          player1Id: plan.player1Id,
+          player2Id: null,
+          player3Id: plan.player3Id,
+          player4Id: null,
+          opponentName: plan.opponentName,
+          opponentPartnerName: plan.opponentPartnerName,
+          statusChangedAt: isLive ? now : null,
+          player1MovedAt: null,
+          player3MovedAt: null,
+          updatedAt: now,
         })
         .where(eq(courts.id, plan.court.id));
       updatedCourtsCount++;

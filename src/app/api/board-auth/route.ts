@@ -35,7 +35,7 @@ export const POST = async (request: NextRequest) => {
 
     if (!/^\d{4}$/.test(submittedPin)) {
       return NextResponse.json(
-        { error: "Enter all 4 digits of the event PIN." },
+        { error: "Enter all 4 digits of the Team PIN." },
         { status: 400 }
       );
     }

@@ -9,7 +9,7 @@ export const SiteFooter = () => (
       </h2>
       <p className="mt-3 max-w-xl text-base text-white/85">
         Court assignments can change through the day. If something looks off,
-        check in with the tournament desk on site.
+        check in with the Ascender desk on site.
       </p>
       <a
         href="#top"

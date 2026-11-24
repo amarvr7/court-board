@@ -50,3 +50,16 @@ export const parseFullName = (
     fullName: `${firstName} ${lastName}`,
   };
 };
+
+/**
+ * Formats a free-text opponent name the same way as roster names.
+ * "Jordan Smith" => "Jordan S."
+ */
+export const formatOpponentPrivacyName = (
+  rawName?: string | null
+): string | null => {
+  if (!rawName || !rawName.trim()) return null;
+  const { firstName, lastName } = parseFullName(rawName);
+  const formatted = formatPlayerPrivacyName(firstName, lastName);
+  return formatted || null;
+};

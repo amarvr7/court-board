@@ -1,17 +1,17 @@
 /**
  * One row of the order-of-play CSV after the browser has read it.
- * Side A = player1 (+ player1Partner for doubles)
- * Side B = player2 (+ player2Partner for doubles)
+ * Our side = player (+ partner for doubles)
+ * Opponent side = free-text opponent (+ opponentPartner)
  */
 export interface BulkUploadRow {
   courtName?: string;
   status?: string;
-  player1?: string;
-  player2?: string;
-  player1Partner?: string;
-  player2Partner?: string;
-  player1FirstName?: string;
-  player1LastName?: string;
-  player2FirstName?: string;
-  player2LastName?: string;
+  /** Our player (must already be on the roster) */
+  player?: string;
+  /** Opponent free text */
+  opponent?: string;
+  /** Our partner (must already be on the roster) */
+  partner?: string;
+  /** Opponent's partner free text */
+  opponentPartner?: string;
 }

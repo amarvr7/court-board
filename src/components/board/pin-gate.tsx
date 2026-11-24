@@ -15,7 +15,7 @@ export const PinGate = ({ configured = true }: { configured?: boolean }) => {
 
   const submitPinCode = async (pinCode: string) => {
     if (pinCode.length !== 4) {
-      setErrorMessage("Please enter all 4 digits of the Event PIN.");
+      setErrorMessage("Please enter all 4 digits of the Team PIN.");
       return;
     }
 
@@ -108,7 +108,7 @@ export const PinGate = ({ configured = true }: { configured?: boolean }) => {
               Board not open yet
             </CardTitle>
             <CardDescription className="text-sm text-slate-600">
-              The event PIN hasn&apos;t been set. Please check with the tournament desk.
+              The Team PIN hasn&apos;t been set. Please check with the desk.
             </CardDescription>
           </CardHeader>
         </Card>
@@ -124,10 +124,10 @@ export const PinGate = ({ configured = true }: { configured?: boolean }) => {
             <Lock className="h-7 w-7" aria-hidden="true" />
           </div>
           <CardTitle className="font-display text-3xl font-bold uppercase text-slate-900">
-            Enter event PIN
+            Enter Team PIN
           </CardTitle>
           <CardDescription className="text-sm text-slate-600">
-            Enter the 4-digit PIN from the tournament desk to see live court assignments.
+            Enter the 4-digit Team PIN from the desk to see live court assignments.
           </CardDescription>
         </CardHeader>
 
@@ -136,7 +136,7 @@ export const PinGate = ({ configured = true }: { configured?: boolean }) => {
             <div
               className="flex items-center justify-center gap-3"
               role="group"
-              aria-label="4-digit Event PIN input"
+              aria-label="4-digit Team PIN input"
             >
               {digits.map((digit, index) => (
                 <input
@@ -190,7 +190,7 @@ export const PinGate = ({ configured = true }: { configured?: boolean }) => {
 
             <div className="flex items-center justify-center gap-2 border-t border-slate-100 pt-4 text-xs text-slate-500">
               <ShieldCheck className="h-4 w-4 text-brand-600" />
-              <span>Ask the tournament desk if you don&apos;t have the PIN.</span>
+              <span>Ask the desk if you don&apos;t have the Team PIN.</span>
             </div>
           </form>
         </CardContent>
