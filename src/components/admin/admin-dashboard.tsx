@@ -458,7 +458,7 @@ export const AdminDashboard = ({
         : "https://example.com/";
     const subject = formatEmailSubject();
     const body = buildCoachEmailBody(matchLinesForEmail, boardUrl);
-    const mailto = `mailto:${emails.join(",")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    const mailto = `mailto:${emails.join(";")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     window.location.href = mailto;
   };
 
