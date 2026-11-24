@@ -55,6 +55,14 @@ const TAB_TO_ZONE_MAP: Record<Exclude<ZoneFilterTab, "All">, CourtZone> = {
 
 const POLL_INTERVAL_SECONDS = 20;
 
+type BoardPlayer = BoardCourtDTO["player1"];
+
+/** "Arthur P." for singles, "Arthur P. / Bianca V." for a doubles team. */
+const formatSide = (player: BoardPlayer, partner: BoardPlayer): string => {
+  const names = [player?.displayName, partner?.displayName].filter(Boolean);
+  return names.length > 0 ? names.join(" / ") : "TBD";
+};
+
 const getStatusBadgeVariant = (status: MatchStatus) => {
   if (status === "Warmup") return "warmup";
   if (status === "In Progress") return "inProgress";
@@ -155,7 +163,12 @@ export const CourtBoard = ({
     }> = [];
 
     for (const court of courts) {
-      const playersOnCourt = [court.player1, court.player2].filter(
+      const playersOnCourt = [
+        court.player1,
+        court.player3,
+        court.player2,
+        court.player4,
+      ].filter(
         (p): p is NonNullable<typeof p> => Boolean(p)
       );
 
@@ -346,7 +359,7 @@ export const CourtBoard = ({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={handleSearchKeyDown}
-              placeholder="Search player name (e.g. Arthur P., Bianca V., Carlos M.) to highlight & jump to court..."
+              placeholder="Search a player’s first name to find their court"
               aria-label="Search player name to highlight and jump to assigned court"
               className="h-11 pl-10 pr-24 text-sm sm:text-base"
             />
@@ -366,7 +379,7 @@ export const CourtBoard = ({
 
           {/* Search Match Jump Chips */}
           {normalizedQuery && (
-            <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3">
+            <div className="mt-3 rounded-xl border border-brand-200 bg-brand-50/70 p-3">
               {matchingPlayerAssignments.length === 0 ? (
                 <p className="text-xs font-medium text-slate-600">
                   No active court assignment found matching{" "}
@@ -377,14 +390,14 @@ export const CourtBoard = ({
                 </p>
               ) : (
                 <div className="space-y-2">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-900">
-                    <Sparkles className="h-3.5 w-3.5 text-emerald-600" />
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-brand-900">
+                    <Sparkles className="h-3.5 w-3.5 text-brand-600" />
                     <span>
                       Found {matchingPlayerAssignments.length} assigned{" "}
                       {matchingPlayerAssignments.length === 1
                         ? "player"
                         : "players"}{" "}
-                      — click to jump &amp; highlight court:
+                      Tap a name to jump to the court:
                     </span>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -395,14 +408,14 @@ export const CourtBoard = ({
                         onClick={() => handleJumpToCourt(match.courtId)}
                         aria-label={`Jump to ${match.courtName} for player ${match.displayName}`}
                         tabIndex={0}
-                        className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 shadow-2xs transition hover:border-emerald-500 hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="inline-flex items-center gap-2 rounded-lg border border-brand-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 shadow-2xs transition hover:border-brand-500 hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-500"
                       >
-                        <span className="text-emerald-700">
+                        <span className="text-brand-700">
                           {match.displayName}
                         </span>
                         <span className="text-slate-300">•</span>
                         <span className="inline-flex items-center gap-1 font-bold text-slate-800">
-                          <MapPin className="h-3 w-3 text-emerald-600" />
+                          <MapPin className="h-3 w-3 text-brand-600" />
                           {match.courtName}
                         </span>
                         <Badge
@@ -468,7 +481,12 @@ export const CourtBoard = ({
               {zoneCourts.map((court) => {
                 const isSearchMatch = matchingCourtIdsSet.has(court.id);
                 const isJumpHighlighted = highlightedCourtId === court.id;
-                const hasPlayers = Boolean(court.player1 || court.player2);
+                const hasPlayers = Boolean(
+                  court.player1 || court.player2 || court.player3 || court.player4
+                );
+                const isDoubles = Boolean(court.player3 || court.player4);
+                const sideA = formatSide(court.player1, court.player3);
+                const sideB = formatSide(court.player2, court.player4);
 
                 return (
                   <Card
@@ -486,7 +504,7 @@ export const CourtBoard = ({
                       court.status === "Maintenance" &&
                         "border-rose-200 bg-rose-50/30",
                       (isSearchMatch || isJumpHighlighted) &&
-                        "ring-3 ring-emerald-500 border-emerald-500 bg-emerald-50/40 shadow-md scale-[1.01]"
+                        "ring-3 ring-brand-500 border-brand-500 bg-brand-50/40 shadow-md scale-[1.01]"
                     )}
                   >
                     {/* Top Status Accent Bar */}
@@ -534,11 +552,11 @@ export const CourtBoard = ({
                           <div className="space-y-1.5">
                             <div className="flex items-center justify-between text-sm">
                               <span className="inline-flex items-center gap-1.5 font-semibold text-slate-900">
-                                <Users className="h-3.5 w-3.5 text-emerald-600" />
-                                {court.player1?.displayName ?? "TBD"}
+                                <Users className="h-3.5 w-3.5 text-brand-600" />
+                                {sideA}
                               </span>
                               <span className="rounded bg-slate-200/70 px-1.5 py-0.5 text-[10px] font-bold uppercase text-slate-600">
-                                P1
+                                {isDoubles ? "Team A" : "P1"}
                               </span>
                             </div>
 
@@ -552,11 +570,11 @@ export const CourtBoard = ({
 
                             <div className="flex items-center justify-between text-sm">
                               <span className="inline-flex items-center gap-1.5 font-semibold text-slate-900">
-                                <Users className="h-3.5 w-3.5 text-emerald-600" />
-                                {court.player2?.displayName ?? "TBD"}
+                                <Users className="h-3.5 w-3.5 text-brand-600" />
+                                {sideB}
                               </span>
                               <span className="rounded bg-slate-200/70 px-1.5 py-0.5 text-[10px] font-bold uppercase text-slate-600">
-                                P2
+                                {isDoubles ? "Team B" : "P2"}
                               </span>
                             </div>
                           </div>

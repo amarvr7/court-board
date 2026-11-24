@@ -6,7 +6,7 @@ import { Lock, ShieldCheck, AlertCircle, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
-export const PinGate = () => {
+export const PinGate = ({ configured = true }: { configured?: boolean }) => {
   const router = useRouter();
   const [digits, setDigits] = useState<string[]>(["", "", "", ""]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -32,8 +32,11 @@ export const PinGate = () => {
       const data = await response.json();
 
       if (!response.ok) {
-        setErrorMessage(data?.error ?? "Invalid Event PIN.");
+        setErrorMessage(data?.error ?? "That PIN isn't right.");
         setIsSubmitting(false);
+        // Clear the boxes so the next try starts fresh.
+        setDigits(["", "", "", ""]);
+        setTimeout(() => inputRefs.current[0]?.focus(), 0);
         return;
       }
 
@@ -96,6 +99,23 @@ export const PinGate = () => {
     void submitPinCode(digits.join(""));
   };
 
+  if (!configured) {
+    return (
+      <div className="flex items-center justify-center px-0 py-6 sm:py-10">
+        <Card className="w-full max-w-md rounded-3xl border-slate-200 bg-white shadow-lg">
+          <CardHeader className="space-y-3 text-center">
+            <CardTitle className="font-display text-3xl font-bold uppercase text-slate-900">
+              Board not open yet
+            </CardTitle>
+            <CardDescription className="text-sm text-slate-600">
+              The event PIN hasn&apos;t been set. Please check with the tournament desk.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center justify-center px-0 py-6 sm:py-10">
       <Card className="w-full max-w-md rounded-3xl border-slate-200 bg-white shadow-lg">
@@ -136,7 +156,7 @@ export const PinGate = () => {
                   tabIndex={0}
                   autoFocus={index === 0}
                   disabled={isSubmitting}
-                  className="h-16 w-14 rounded-2xl border-2 border-slate-300 bg-slate-50 text-center font-display text-3xl font-bold text-slate-900 transition-all focus:border-emerald-600 focus:bg-white focus:outline-none focus:ring-4 focus:ring-emerald-500/15 disabled:opacity-50"
+                  className="h-16 w-14 rounded-2xl border-2 border-slate-300 bg-slate-50 text-center font-display text-3xl font-bold text-slate-900 transition-all focus:border-brand-600 focus:bg-white focus:outline-none focus:ring-4 focus:ring-brand-500/15 disabled:opacity-50"
                 />
               ))}
             </div>
@@ -159,7 +179,7 @@ export const PinGate = () => {
               aria-label="Unlock Live Court Board"
             >
               {isSubmitting ? (
-                "Verifying PIN..."
+                "Checking PIN…"
               ) : (
                 <>
                   <span>Unlock board</span>
@@ -169,7 +189,7 @@ export const PinGate = () => {
             </Button>
 
             <div className="flex items-center justify-center gap-2 border-t border-slate-100 pt-4 text-xs text-slate-500">
-              <ShieldCheck className="h-4 w-4 text-emerald-600" />
+              <ShieldCheck className="h-4 w-4 text-brand-600" />
               <span>Ask the tournament desk if you don&apos;t have the PIN.</span>
             </div>
           </form>

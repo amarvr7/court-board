@@ -1,4 +1,7 @@
 import Link from "next/link";
+import Image from "next/image";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { EVENT_INFO } from "@/lib/event-config";
@@ -11,7 +14,18 @@ const NAV_ITEMS: Array<{ key: ActivePage; label: string; href: string }> = [
   { key: "board", label: "Live Board", href: "/board" },
 ];
 
-export const SiteHeader = ({ active }: { active: ActivePage }) => (
+const hasLogoFile = (): boolean => {
+  try {
+    return existsSync(path.join(process.cwd(), "public", EVENT_INFO.logo.src));
+  } catch {
+    return false;
+  }
+};
+
+export const SiteHeader = ({ active }: { active: ActivePage }) => {
+  const showLogo = hasLogoFile();
+
+  return (
   <header className="sticky top-0 z-40">
     {/* Utility strip */}
     <div className="bg-navy text-white">
@@ -36,9 +50,23 @@ export const SiteHeader = ({ active }: { active: ActivePage }) => (
     <div className="border-b border-slate-200 bg-white/95 backdrop-blur">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
         <Link href="/" className="flex items-center gap-2.5" aria-label="Home">
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-navy">
-            <TennisBall className="h-6 w-6" />
-          </span>
+          {showLogo ? (
+            <>
+              <Image
+                src={EVENT_INFO.logo.src}
+                alt={EVENT_INFO.logo.alt}
+                width={160}
+                height={48}
+                priority
+                className="h-10 w-auto"
+              />
+              <span className="h-8 w-px bg-slate-200" aria-hidden="true" />
+            </>
+          ) : (
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-navy">
+              <TennisBall className="h-6 w-6" />
+            </span>
+          )}
           <span className="leading-none">
             <span className="block font-display text-xl font-bold uppercase tracking-wide text-slate-900">
               {EVENT_INFO.shortName} Court Board
@@ -82,4 +110,5 @@ export const SiteHeader = ({ active }: { active: ActivePage }) => (
       </div>
     </div>
   </header>
-);
+  );
+};

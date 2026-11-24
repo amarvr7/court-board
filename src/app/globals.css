@@ -6,8 +6,8 @@
  *   - Condensed uppercase display face for headings (Barlow Condensed ≈ Trade Gothic Bold Condensed No. 20)
  *   - Primary blue #006FEB, navy #080F17, steel #587089, ice #D0E1F7, tennis-ball lime #C1E014
  *
- * The default `emerald` and `slate` scales are remapped so every existing utility
- * class picks up the new palette automatically.
+ * `brand-50` … `brand-950` is the IMG blue scale. The default `slate` scale is
+ * remapped to cool steel neutrals so every slate utility picks up the palette.
  */
 
 @theme inline {
@@ -16,18 +16,18 @@
 }
 
 @theme {
-  /* Brand primary (blue) — replaces emerald */
-  --color-emerald-50: #e8f1fd;
-  --color-emerald-100: #d0e1f7;
-  --color-emerald-200: #b3cff3;
-  --color-emerald-300: #7fb8ff;
-  --color-emerald-400: #3d8ff2;
-  --color-emerald-500: #006feb;
-  --color-emerald-600: #006feb;
-  --color-emerald-700: #0058bd;
-  --color-emerald-800: #004494;
-  --color-emerald-900: #0a2f66;
-  --color-emerald-950: #061a3a;
+  /* Brand primary (blue) scale */
+  --color-brand-50: #e8f1fd;
+  --color-brand-100: #d0e1f7;
+  --color-brand-200: #b3cff3;
+  --color-brand-300: #7fb8ff;
+  --color-brand-400: #3d8ff2;
+  --color-brand-500: #006feb;
+  --color-brand-600: #006feb;
+  --color-brand-700: #0058bd;
+  --color-brand-800: #004494;
+  --color-brand-900: #0a2f66;
+  --color-brand-950: #061a3a;
 
   /* Cool steel neutrals — replaces slate */
   --color-slate-50: #fafbfc;

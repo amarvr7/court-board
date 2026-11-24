@@ -1,9 +1,16 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { createRateLimiter } from "@/lib/rate-limit";
 
 export const ADMIN_COOKIE_NAME = "court_board_admin_session";
 export const ADMIN_SESSION_MAX_AGE_SECONDS = 60 * 60 * 12; // 12 hours
+
+// 10 wrong admin passwords per network every 15 minutes.
+export const adminLoginLimiter = createRateLimiter({
+  maxFailures: 10,
+  windowMs: 15 * 60 * 1000,
+});
 
 const getAdminPassword = (): string => (process.env.ADMIN_PASSWORD ?? "").trim();
 
@@ -41,6 +48,6 @@ export const isAdminAuthenticated = async (): Promise<boolean> => {
 
 export const adminUnauthorizedResponse = () =>
   NextResponse.json(
-    { error: "Admin authentication required." },
+    { error: "Admin sign-in required." },
     { status: 401 }
   );

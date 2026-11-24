@@ -1,6 +1,5 @@
 import React from "react";
-import { cookies } from "next/headers";
-import { BOARD_PIN_COOKIE_NAME } from "@/app/api/board-auth/route";
+import { isBoardAuthenticated, isEventPinConfigured } from "@/lib/board-auth";
 import { getBoardCourtsData } from "@/lib/queries";
 import { PinGate } from "@/components/board/pin-gate";
 import { CourtBoard } from "@/components/board/court-board";
@@ -11,9 +10,7 @@ import { SiteFooter } from "@/components/site/site-footer";
 export const dynamic = "force-dynamic";
 
 export default async function BoardPage() {
-  const cookieStore = await cookies();
-  const isPinVerified =
-    cookieStore.get(BOARD_PIN_COOKIE_NAME)?.value === "true";
+  const isPinVerified = await isBoardAuthenticated();
 
   const boardData = isPinVerified ? await getBoardCourtsData() : null;
   const unlocked = isPinVerified && boardData;
@@ -35,7 +32,7 @@ export default async function BoardPage() {
 
       <main className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         {!unlocked ? (
-          <PinGate />
+          <PinGate configured={isEventPinConfigured()} />
         ) : (
           <CourtBoard
             initialCourts={boardData.courts}

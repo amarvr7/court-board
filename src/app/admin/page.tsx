@@ -1,9 +1,7 @@
 import React from "react";
 import Link from "next/link";
-import { UserButton } from "@clerk/nextjs";
 import { ArrowRight } from "lucide-react";
 import { getAdminCourtsAndPlayersData } from "@/lib/queries";
-import { isClerkConfigured } from "@/lib/clerk-config";
 import { isAdminAuthenticated, isAdminPasswordConfigured } from "@/lib/admin-auth";
 import { AdminDashboard } from "@/components/admin/admin-dashboard";
 import { AdminLogin, AdminSignOutButton } from "@/components/admin/admin-login";
@@ -14,7 +12,6 @@ import { SiteFooter } from "@/components/site/site-footer";
 export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
-  const clerkReady = isClerkConfigured();
   const isAuthed = await isAdminAuthenticated();
 
   if (!isAuthed) {
@@ -40,7 +37,7 @@ export default async function AdminPage() {
         compact
         eyebrow="Tournament desk"
         title="Court control desk"
-        subtitle="Quick-edit court status and players, or bulk-upload the order of play from CSV."
+        subtitle="Edit courts one at a time, or upload the whole order of play from a CSV file."
       >
         <Link
           href="/board"
@@ -50,11 +47,6 @@ export default async function AdminPage() {
           <ArrowRight className="h-4 w-4" />
         </Link>
         <AdminSignOutButton />
-        {clerkReady && (
-          <span className="inline-flex items-center">
-            <UserButton />
-          </span>
-        )}
       </EventHero>
 
       <main className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">

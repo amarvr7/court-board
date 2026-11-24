@@ -1,36 +1,71 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ITC Court Board
 
-## Getting Started
+Live court assignments for the International Tennis Championship at IMG Academy.
+Students, coaches, and parents enter the event PIN to see which court each player
+is on. The tournament desk updates courts from the admin page.
 
-First, run the development server:
+## Pages
+
+- `/` — event overview
+- `/board` — live board (event PIN required). Names show as first name + last initial.
+- `/admin` — tournament desk (admin password required). Edit courts one at a time or
+  upload the whole order of play from a CSV file.
+
+## First-time setup
+
+1. Install Node.js 20 or newer.
+2. In this folder, run `npm install`.
+3. Copy `.env.example` to `.env.local` and fill in every value.
+4. Create the tables: `npm run db:push`
+5. Optional, for testing only: `npm run db:seed` loads 49 courts and 60 fake players.
+   It **deletes everything first** and asks you to type `RESET` to confirm.
+   Never run it on the live event database.
+6. Start the app: `npm run dev`, then open http://localhost:3000
+
+## Already have a database from the first version?
+
+The second Stadium court was renamed from "Clay Hard" to "Stadium Clay".
+Run this once to rename it without losing any assignments:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run db:rename-stadium
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## CSV format for the order of play
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Column | Required | Notes |
+| --- | --- | --- |
+| `courtName` | Yes | Must match a court name exactly, e.g. `Hard 12`, `Stadium Clay` |
+| `status` | No | `Warmup`, `In Progress`, `Open`, or `Maintenance`. Blank = In Progress if players are listed, otherwise Open |
+| `player1` | No | Full name, e.g. `Arthur Pendelton` |
+| `player2` | No | Opponent's full name |
+| `player1Partner` | Doubles only | Partner of player 1 (Team A) |
+| `player2Partner` | Doubles only | Partner of player 2 (Team B) |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Rules the upload checks before saving anything:
 
-## Learn More
+- A player can only be on one court. If a player is still on another court that
+  isn't in the file, clear that court first or include it in the file.
+- Two different players with the exact same name are treated as one person.
+  Add a middle initial to one of them (e.g. `Sam J. Lee`) to tell them apart.
+- If any row has a problem, nothing is saved and the admin page lists what to fix.
 
-To learn more about Next.js, take a look at the following resources:
+Download a template from the admin page.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Logo
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Put the IMG Academy Tennis wordmark at
+`public/brand/IMGA_Tennis_Wordmark_Black_Blue.jpg` and the header shows it automatically.
 
-## Deploy on Vercel
+## Security notes
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- The board PIN and admin password are both slowed down and limited after repeated
+  wrong tries. The limits are counted per network, so a whole venue Wi-Fi shares them.
+  Limits reset if the server restarts.
+- Board and admin cookies are signed with `ADMIN_SESSION_SECRET`, so they can't be faked.
+- Changing `EVENT_PIN` signs every device out of the board. Changing `ADMIN_PASSWORD`
+  signs every admin out.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Going live
+
+Contact IMG Academy support to publish the app internally.

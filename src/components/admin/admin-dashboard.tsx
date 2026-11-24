@@ -6,7 +6,6 @@ import {
   Upload,
   FileSpreadsheet,
   Download,
-  Trash2,
   CheckCircle2,
   AlertCircle,
   Search,
@@ -28,7 +27,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { AdminCourtDTO, AdminPlayerDTO } from "@/lib/queries";
 import type { CourtZone, MatchStatus } from "@/db/schema";
-import type { BulkUploadRow } from "@/app/api/admin/bulk-upload/route";
+import type { BulkUploadRow } from "@/lib/bulk-upload-types";
 
 interface AdminDashboardProps {
   initialCourts: AdminCourtDTO[];
@@ -58,14 +57,85 @@ const MATCH_STATUS_OPTIONS: MatchStatus[] = [
   "Maintenance",
 ];
 
-const SAMPLE_CSV_CONTENT = `courtName,status,player1,player2
-Stadium Hard,In Progress,Arthur Pendelton,Carlos Mendoza
-Clay Hard,Warmup,Bianca Vance,Diana Kovacs
-Hard 1,In Progress,Ethan Blackwood,Gabriel Sorrento
-Hard 2,In Progress,Fiona Gallagher,Hannah Lindqvist
-East Clay 1,Warmup,Isaac Thornton,Kai Takahashi
-Legacy 1,In Progress,Elena Rostova,Nadia Petrova
-Indoors 1,Maintenance,,`;
+// player1Partner / player2Partner are only filled in for doubles.
+const SAMPLE_CSV_CONTENT = `courtName,status,player1,player1Partner,player2,player2Partner
+Stadium Hard,In Progress,Arthur Pendelton,,Carlos Mendoza,
+Stadium Clay,Warmup,Bianca Vance,,Diana Kovacs,
+Hard 1,In Progress,Ethan Blackwood,,Gabriel Sorrento,
+Hard 2,In Progress,Fiona Gallagher,Hannah Lindqvist,Isaac Thornton,Kai Takahashi
+East Clay 1,Warmup,Elena Rostova,,Nadia Petrova,
+Legacy 1,In Progress,Marcus Sterling,,Oliver Whitmore,
+Indoors 1,Maintenance,,,,`;
+
+type PlayerSlotKey = "player1Id" | "player2Id" | "player3Id" | "player4Id";
+
+interface PlayerSelectProps {
+  court: AdminCourtDTO;
+  slot: PlayerSlotKey;
+  label: string;
+  players: AdminPlayerDTO[];
+  courtNameByPlayerId: Map<number, string>;
+  disabled: boolean;
+  onAssign: (slot: PlayerSlotKey, playerId: number | null) => void;
+}
+
+const SLOT_TO_PLAYER = {
+  player1Id: "player1",
+  player2Id: "player2",
+  player3Id: "player3",
+  player4Id: "player4",
+} as const;
+
+const PlayerSelect = ({
+  court,
+  slot,
+  label,
+  players,
+  courtNameByPlayerId,
+  disabled,
+  onAssign,
+}: PlayerSelectProps) => {
+  const assigned = court[SLOT_TO_PLAYER[slot]];
+  const selectId = `${slot}-${court.id}`;
+
+  return (
+    <div>
+      <label
+        htmlFor={selectId}
+        className="mb-1 block text-[11px] font-semibold text-slate-600"
+      >
+        {label}{" "}
+        {assigned && (
+          <span className="font-normal text-brand-700">
+            (Board shows: {assigned.privacyName})
+          </span>
+        )}
+      </label>
+      <select
+        id={selectId}
+        value={court[slot] ?? ""}
+        onChange={(e) => {
+          const val = e.target.value;
+          onAssign(slot, val ? Number(val) : null);
+        }}
+        disabled={disabled}
+        className="h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+      >
+        <option value="">— Unassigned —</option>
+        {players.map((p) => {
+          const onCourt = courtNameByPlayerId.get(p.id);
+          const elsewhere = onCourt && onCourt !== court.name;
+          return (
+            <option key={p.id} value={p.id}>
+              {p.fullName}
+              {elsewhere ? ` (on ${onCourt})` : ""}
+            </option>
+          );
+        })}
+      </select>
+    </div>
+  );
+};
 
 export const AdminDashboard = ({
   initialCourts,
@@ -79,9 +149,12 @@ export const AdminDashboard = ({
   const [bannerMessage, setBannerMessage] = useState<{
     type: "success" | "error";
     text: string;
+    details?: string[];
   } | null>(null);
 
-  // Client-side PapaParse CSV state
+  const [doublesCourtIds, setDoublesCourtIds] = useState<Set<number>>(new Set());
+
+  // CSV upload state (the file is read in the browser before saving)
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [parsedCsvRows, setParsedCsvRows] = useState<BulkUploadRow[]>([]);
   const [csvFileName, setCsvFileName] = useState<string>("");
@@ -103,6 +176,10 @@ export const AdminDashboard = ({
       status: normalized.status || normalized.matchstatus || "Open",
       player1: normalized.player1 || normalized.p1 || "",
       player2: normalized.player2 || normalized.p2 || "",
+      player1Partner:
+        normalized.player1partner || normalized.partner1 || normalized.player3 || "",
+      player2Partner:
+        normalized.player2partner || normalized.partner2 || normalized.player4 || "",
       player1FirstName: normalized.player1firstname || "",
       player1LastName: normalized.player1lastname || "",
       player2FirstName: normalized.player2firstname || "",
@@ -128,14 +205,14 @@ export const AdminDashboard = ({
         if (mapped.length === 0) {
           setBannerMessage({
             type: "error",
-            text: "No valid rows with a 'courtName' column were found in the CSV file.",
+            text: "No rows with a court name were found. Check that the file has a courtName column.",
           });
         }
       },
       error: (err) => {
         setBannerMessage({
           type: "error",
-          text: `Failed to parse CSV locally: ${err.message}`,
+          text: `Couldn't read that file: ${err.message}`,
         });
       },
     });
@@ -153,7 +230,7 @@ export const AdminDashboard = ({
         setParsedCsvRows(mapped);
         setBannerMessage({
           type: "success",
-          text: `Parsed ${mapped.length} sample rows locally in browser via PapaParse. Click "Save Parsed CSV to Neon" to commit.`,
+          text: `Loaded ${mapped.length} sample rows. Nothing is saved until you click "Save to board".`,
         });
       },
     });
@@ -173,7 +250,7 @@ export const AdminDashboard = ({
     URL.revokeObjectURL(url);
   };
 
-  const handleSaveParsedCsvToNeon = async () => {
+  const handleSaveCsvToBoard = async () => {
     if (parsedCsvRows.length === 0) return;
     setIsUploadingCsv(true);
     setBannerMessage(null);
@@ -189,7 +266,8 @@ export const AdminDashboard = ({
       if (!response.ok) {
         setBannerMessage({
           type: "error",
-          text: data?.error ?? "Failed to save CSV assignments to Neon.",
+          text: data?.error ?? "Couldn't save the order of play.",
+          details: Array.isArray(data?.problems) ? data.problems : undefined,
         });
         setIsUploadingCsv(false);
         return;
@@ -200,12 +278,12 @@ export const AdminDashboard = ({
 
       const unmatchedText =
         Array.isArray(data?.unmatchedCourts) && data.unmatchedCourts.length > 0
-          ? ` (Unmatched court names skipped: ${data.unmatchedCourts.join(", ")})`
+          ? ` Skipped these court names because they don't match a court: ${data.unmatchedCourts.join(", ")}.`
           : "";
 
       setBannerMessage({
         type: "success",
-        text: `Successfully updated ${data.updatedCourtsCount} courts in Neon Postgres!${unmatchedText}`,
+        text: `Updated ${data.updatedCourtsCount} courts on the board.${unmatchedText}`,
       });
       setParsedCsvRows([]);
       setCsvFileName("");
@@ -213,7 +291,7 @@ export const AdminDashboard = ({
     } catch {
       setBannerMessage({
         type: "error",
-        text: "Network error while saving bulk CSV assignments.",
+        text: "Couldn't reach the server. Check your connection and try again.",
       });
     } finally {
       setIsUploadingCsv(false);
@@ -226,6 +304,8 @@ export const AdminDashboard = ({
       status?: MatchStatus;
       player1Id?: number | null;
       player2Id?: number | null;
+      player3Id?: number | null;
+      player4Id?: number | null;
       action?: "clear";
     }
   ) => {
@@ -256,7 +336,7 @@ export const AdminDashboard = ({
     } catch {
       setBannerMessage({
         type: "error",
-        text: "Network error while updating court.",
+        text: "Couldn't reach the server. Check your connection and try again.",
       });
     } finally {
       setSavingCourtId(null);
@@ -275,14 +355,36 @@ export const AdminDashboard = ({
 
       const matchesName = court.name.toLowerCase().includes(query);
       const matchesZone = court.zone.toLowerCase().includes(query);
-      const matchesP1 =
-        court.player1?.fullName.toLowerCase().includes(query) ?? false;
-      const matchesP2 =
-        court.player2?.fullName.toLowerCase().includes(query) ?? false;
+      const matchesPlayer = [
+        court.player1,
+        court.player2,
+        court.player3,
+        court.player4,
+      ].some((p) => p?.fullName.toLowerCase().includes(query) ?? false);
 
-      return matchesName || matchesZone || matchesP1 || matchesP2;
+      return matchesName || matchesZone || matchesPlayer;
     });
   }, [courts, selectedTab, searchFilter]);
+
+  // Which court each player is currently on, so the dropdowns can show it.
+  const courtNameByPlayerId = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const c of courts) {
+      for (const id of [c.player1Id, c.player2Id, c.player3Id, c.player4Id]) {
+        if (id) map.set(id, c.name);
+      }
+    }
+    return map;
+  }, [courts]);
+
+  const toggleDoubles = (courtId: number) => {
+    setDoublesCourtIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(courtId)) next.delete(courtId);
+      else next.add(courtId);
+      return next;
+    });
+  };
 
   return (
     <div className="space-y-6 pb-16">
@@ -292,19 +394,28 @@ export const AdminDashboard = ({
         <div
           role="status"
           className={cn(
-            "flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm font-medium",
+            "flex items-start justify-between gap-3 rounded-xl border px-4 py-3 text-sm font-medium",
             bannerMessage.type === "success"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              ? "border-brand-200 bg-brand-50 text-brand-900"
               : "border-rose-200 bg-rose-50 text-rose-900"
           )}
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-start gap-2">
             {bannerMessage.type === "success" ? (
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-brand-600" />
             ) : (
               <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
             )}
-            <span>{bannerMessage.text}</span>
+            <div>
+              <span>{bannerMessage.text}</span>
+              {bannerMessage.details && bannerMessage.details.length > 0 && (
+                <ul className="mt-1.5 list-disc space-y-0.5 pl-5 text-xs font-normal">
+                  {bannerMessage.details.map((d) => (
+                    <li key={d}>{d}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
           <button
             type="button"
@@ -316,22 +427,17 @@ export const AdminDashboard = ({
         </div>
       )}
 
-      {/* Section 1: Client-Side CSV Bulk Uploader (PapaParse) */}
+      {/* Section 1: Upload the order of play from a CSV file */}
       <Card className="border-slate-200 bg-white">
         <CardHeader className="pb-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <CardTitle className="flex items-center gap-2 text-lg font-bold text-slate-900">
-                <FileSpreadsheet className="h-5 w-5 text-emerald-600" />
-                Client-Side CSV Bulk Uploader (PapaParse)
+                <FileSpreadsheet className="h-5 w-5 text-brand-600" />
+                Upload the order of play
               </CardTitle>
               <CardDescription className="mt-1">
-                CSV files are parsed 100% locally in your browser via PapaParse before saving court assignments to Neon Postgres. Store local exports in{" "}
-                <code className="rounded bg-slate-100 px-1 py-0.5 text-slate-700">
-                  /local-data
-                </code>{" "}
-                (ignored by <code className="rounded bg-slate-100 px-1 py-0.5 text-slate-700">.cursorignore</code> &amp;{" "}
-                <code className="rounded bg-slate-100 px-1 py-0.5 text-slate-700">.gitignore</code>).
+                Choose a CSV file to preview it here. Nothing changes on the board until you click &ldquo;Save to board&rdquo;. If any row has a problem, nothing is saved and you&apos;ll see what to fix.
               </CardDescription>
             </div>
 
@@ -341,10 +447,10 @@ export const AdminDashboard = ({
                 variant="outline"
                 size="sm"
                 onClick={handleLoadSampleCsvPreview}
-                aria-label="Preview sample CSV in browser"
+                aria-label="Preview the sample file"
               >
-                <Sparkles className="h-3.5 w-3.5 text-emerald-600" />
-                <span>Load Sample CSV</span>
+                <Sparkles className="h-3.5 w-3.5 text-brand-600" />
+                <span>Preview sample</span>
               </Button>
               <Button
                 type="button"
@@ -354,42 +460,42 @@ export const AdminDashboard = ({
                 aria-label="Download CSV template"
               >
                 <Download className="h-3.5 w-3.5" />
-                <span>Download Template</span>
+                <span>Download template</span>
               </Button>
             </div>
           </div>
         </CardHeader>
 
         <CardContent className="space-y-4">
-          <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/70 p-6 text-center transition hover:border-emerald-500 hover:bg-emerald-50/20">
+          <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/70 p-6 text-center transition hover:border-brand-500 hover:bg-brand-50/20">
             <Upload className="h-8 w-8 text-slate-400" aria-hidden="true" />
             <p className="mt-2 text-sm font-semibold text-slate-800">
-              Select a CSV file to parse locally in the browser
+              Choose a CSV file
             </p>
             <p className="mt-0.5 text-xs text-slate-500">
-              Columns: <code>courtName, status, player1, player2</code>
+              Columns: <code>courtName, status, player1, player2</code>. For doubles, also fill in <code>player1Partner</code> and <code>player2Partner</code>.
             </p>
             <input
               ref={fileInputRef}
               type="file"
               accept=".csv,text/csv"
               onChange={handleCsvFileChange}
-              aria-label="Upload CSV file for local PapaParse processing"
-              className="mt-3 block text-xs text-slate-600 file:mr-3 file: cursor-pointer file:rounded-lg file:border-0 file:bg-emerald-600 file:px-3.5 file:py-2 file:text-xs file:font-semibold file:text-white hover:file:bg-emerald-700"
+              aria-label="Choose a CSV file with the order of play"
+              className="mt-3 block text-xs text-slate-600 file:mr-3 file: cursor-pointer file:rounded-lg file:border-0 file:bg-brand-600 file:px-3.5 file:py-2 file:text-xs file:font-semibold file:text-white hover:file:bg-brand-700"
             />
           </div>
 
-          {/* Local Browser Preview Table before saving to Neon */}
+          {/* Preview before saving */}
           {parsedCsvRows.length > 0 && (
-            <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
+            <div className="space-y-3 rounded-xl border border-brand-200 bg-brand-50/40 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h4 className="text-sm font-bold text-slate-900">
-                    Local Browser Preview ({parsedCsvRows.length} rows from{" "}
-                    <span className="text-emerald-700">{csvFileName}</span>)
+                    Preview ({parsedCsvRows.length} rows from{" "}
+                    <span className="text-brand-700">{csvFileName}</span>)
                   </h4>
                   <p className="text-xs text-slate-600">
-                    Review parsed assignments below, then commit to Neon Postgres.
+                    Check the rows below, then save them to the board.
                   </p>
                 </div>
 
@@ -408,14 +514,14 @@ export const AdminDashboard = ({
                   <Button
                     type="button"
                     size="sm"
-                    onClick={handleSaveParsedCsvToNeon}
+                    onClick={handleSaveCsvToBoard}
                     disabled={isUploadingCsv}
                   >
                     <Save className="h-3.5 w-3.5" />
                     <span>
                       {isUploadingCsv
-                        ? "Saving to Neon..."
-                        : `Save ${parsedCsvRows.length} Rows to Neon`}
+                        ? "Saving…"
+                        : `Save ${parsedCsvRows.length} rows to board`}
                     </span>
                   </Button>
                 </div>
@@ -427,8 +533,8 @@ export const AdminDashboard = ({
                     <tr>
                       <th className="px-3 py-2">Court Name</th>
                       <th className="px-3 py-2">Status</th>
-                      <th className="px-3 py-2">Player 1</th>
-                      <th className="px-3 py-2">Player 2</th>
+                      <th className="px-3 py-2">Team A / Player 1</th>
+                      <th className="px-3 py-2">Team B / Player 2</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -439,10 +545,10 @@ export const AdminDashboard = ({
                         </td>
                         <td className="px-3 py-2">{row.status || "Open"}</td>
                         <td className="px-3 py-2 text-slate-700">
-                          {row.player1 || "—"}
+                          {[row.player1, row.player1Partner].filter(Boolean).join(" / ") || "—"}
                         </td>
                         <td className="px-3 py-2 text-slate-700">
-                          {row.player2 || "—"}
+                          {[row.player2, row.player2Partner].filter(Boolean).join(" / ") || "—"}
                         </td>
                       </tr>
                     ))}
@@ -460,11 +566,10 @@ export const AdminDashboard = ({
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <CardTitle className="text-lg font-bold text-slate-900">
-                Quick-Edit Court Assignments &amp; Statuses ({courts.length} Courts •{" "}
-                {players.length} Seeded Players)
+                Edit courts ({courts.length} courts, {players.length} players)
               </CardTitle>
               <CardDescription>
-                Assign players, switch match status badges, or clear courts in one click. Public board displays names as First Name + Last Initial.
+                Change a court&apos;s status, assign players, or clear it. The live board shows first name and last initial only. A player can only be on one court at a time.
               </CardDescription>
             </div>
 
@@ -509,7 +614,7 @@ export const AdminDashboard = ({
                   className={cn(
                     "flex flex-col justify-between rounded-xl border p-3.5 transition-all",
                     court.status === "In Progress" &&
-                      "border-emerald-200 bg-emerald-50/20",
+                      "border-brand-200 bg-brand-50/20",
                     court.status === "Warmup" &&
                       "border-amber-200 bg-amber-50/20",
                     court.status === "Open" && "border-slate-200 bg-white",
@@ -583,7 +688,7 @@ export const AdminDashboard = ({
                           }
                           disabled={isSaving}
                           aria-label={`Match status for ${court.name}`}
-                          className="h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                          className="h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
                         >
                           {MATCH_STATUS_OPTIONS.map((statusOption) => (
                             <option key={statusOption} value={statusOption}>
@@ -593,83 +698,56 @@ export const AdminDashboard = ({
                         </select>
                       </div>
 
-                      {/* Player 1 Select */}
-                      <div>
-                        <label
-                          htmlFor={`p1-${court.id}`}
-                          className="mb-1 block text-[11px] font-semibold text-slate-600"
-                        >
-                          Player 1{" "}
-                          {court.player1 && (
-                            <span className="font-normal text-emerald-700">
-                              (Board: {court.player1.privacyName})
-                            </span>
-                          )}
-                        </label>
-                        <select
-                          id={`p1-${court.id}`}
-                          value={court.player1Id ?? ""}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            void handleQuickUpdateCourt(court.id, {
-                              player1Id: val ? Number(val) : null,
-                              status:
-                                val && court.status === "Open"
-                                  ? "Warmup"
-                                  : undefined,
-                            });
-                          }}
-                          disabled={isSaving}
-                          aria-label={`Assign Player 1 for ${court.name}`}
-                          className="h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                        >
-                          <option value="">— Unassigned —</option>
-                          {players.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.fullName} ({p.privacyName})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                      {(() => {
+                        const showDoubles =
+                          doublesCourtIds.has(court.id) ||
+                          Boolean(court.player3Id || court.player4Id);
+                        const assign = (slot: PlayerSlotKey, playerId: number | null) =>
+                          void handleQuickUpdateCourt(court.id, {
+                            ...({ [slot]: playerId } as Partial<
+                              Record<PlayerSlotKey, number | null>
+                            >),
+                            status:
+                              playerId && court.status === "Open" ? "Warmup" : undefined,
+                          });
+                        const shared = {
+                          court,
+                          players,
+                          courtNameByPlayerId,
+                          disabled: isSaving,
+                          onAssign: assign,
+                        };
 
-                      {/* Player 2 Select */}
-                      <div>
-                        <label
-                          htmlFor={`p2-${court.id}`}
-                          className="mb-1 block text-[11px] font-semibold text-slate-600"
-                        >
-                          Player 2{" "}
-                          {court.player2 && (
-                            <span className="font-normal text-emerald-700">
-                              (Board: {court.player2.privacyName})
-                            </span>
-                          )}
-                        </label>
-                        <select
-                          id={`p2-${court.id}`}
-                          value={court.player2Id ?? ""}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            void handleQuickUpdateCourt(court.id, {
-                              player2Id: val ? Number(val) : null,
-                              status:
-                                val && court.status === "Open"
-                                  ? "Warmup"
-                                  : undefined,
-                            });
-                          }}
-                          disabled={isSaving}
-                          aria-label={`Assign Player 2 for ${court.name}`}
-                          className="h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                        >
-                          <option value="">— Unassigned —</option>
-                          {players.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.fullName} ({p.privacyName})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                        return (
+                          <>
+                            <PlayerSelect
+                              {...shared}
+                              slot="player1Id"
+                              label={showDoubles ? "Team A, player 1" : "Player 1"}
+                            />
+                            {showDoubles && (
+                              <PlayerSelect {...shared} slot="player3Id" label="Team A, partner" />
+                            )}
+                            <PlayerSelect
+                              {...shared}
+                              slot="player2Id"
+                              label={showDoubles ? "Team B, player 1" : "Player 2"}
+                            />
+                            {showDoubles && (
+                              <PlayerSelect {...shared} slot="player4Id" label="Team B, partner" />
+                            )}
+                            {!(court.player3Id || court.player4Id) && (
+                              <button
+                                type="button"
+                                onClick={() => toggleDoubles(court.id)}
+                                className="text-xs font-medium text-brand-700 underline-offset-2 hover:underline"
+                              >
+                                {showDoubles ? "Switch back to singles" : "Make this a doubles match"}
+                              </button>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 </div>

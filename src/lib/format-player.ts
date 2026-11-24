@@ -34,10 +34,11 @@ export const parseFullName = (
 
   const parts = trimmed.split(" ");
   if (parts.length === 1) {
+    // Single name: keep it as-is rather than inventing a last name.
     return {
       firstName: parts[0],
-      lastName: "Player",
-      fullName: `${parts[0]} Player`,
+      lastName: "",
+      fullName: parts[0],
     };
   }
 

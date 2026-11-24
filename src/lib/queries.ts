@@ -18,6 +18,10 @@ export interface AdminPlayerDTO {
   privacyName: string;
 }
 
+/**
+ * Side A = player1 (+ player3 as partner in doubles)
+ * Side B = player2 (+ player4 as partner in doubles)
+ */
 export interface BoardCourtDTO {
   id: number;
   sortOrder: number;
@@ -26,6 +30,8 @@ export interface BoardCourtDTO {
   status: MatchStatus;
   player1: BoardPlayerDTO | null;
   player2: BoardPlayerDTO | null;
+  player3: BoardPlayerDTO | null;
+  player4: BoardPlayerDTO | null;
   updatedAt: string;
 }
 
@@ -37,10 +43,17 @@ export interface AdminCourtDTO {
   status: MatchStatus;
   player1Id: number | null;
   player2Id: number | null;
+  player3Id: number | null;
+  player4Id: number | null;
   player1: AdminPlayerDTO | null;
   player2: AdminPlayerDTO | null;
+  player3: AdminPlayerDTO | null;
+  player4: AdminPlayerDTO | null;
   updatedAt: string;
 }
+
+const pick = <T,>(map: Map<number, T>, id: number | null): T | null =>
+  id ? (map.get(id) ?? null) : null;
 
 export const getBoardCourtsData = async (): Promise<{
   courts: BoardCourtDTO[];
@@ -53,12 +66,11 @@ export const getBoardCourtsData = async (): Promise<{
 
   const playerMap = new Map<number, BoardPlayerDTO>();
   for (const p of allPlayers) {
-    const lastInitial = p.lastName.trim().charAt(0).toUpperCase();
     playerMap.set(p.id, {
       id: p.id,
       displayName: formatPlayerPrivacyName(p.firstName, p.lastName),
       firstName: p.firstName,
-      lastInitial,
+      lastInitial: p.lastName.trim().charAt(0).toUpperCase(),
     });
   }
 
@@ -68,8 +80,10 @@ export const getBoardCourtsData = async (): Promise<{
     name: c.name,
     zone: c.zone,
     status: c.status,
-    player1: c.player1Id ? (playerMap.get(c.player1Id) ?? null) : null,
-    player2: c.player2Id ? (playerMap.get(c.player2Id) ?? null) : null,
+    player1: pick(playerMap, c.player1Id),
+    player2: pick(playerMap, c.player2Id),
+    player3: pick(playerMap, c.player3Id),
+    player4: pick(playerMap, c.player4Id),
     updatedAt: c.updatedAt.toISOString(),
   }));
 
@@ -109,8 +123,12 @@ export const getAdminCourtsAndPlayersData = async (): Promise<{
     status: c.status,
     player1Id: c.player1Id,
     player2Id: c.player2Id,
-    player1: c.player1Id ? (playerMap.get(c.player1Id) ?? null) : null,
-    player2: c.player2Id ? (playerMap.get(c.player2Id) ?? null) : null,
+    player3Id: c.player3Id,
+    player4Id: c.player4Id,
+    player1: pick(playerMap, c.player1Id),
+    player2: pick(playerMap, c.player2Id),
+    player3: pick(playerMap, c.player3Id),
+    player4: pick(playerMap, c.player4Id),
     updatedAt: c.updatedAt.toISOString(),
   }));
 

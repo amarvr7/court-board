@@ -5,7 +5,7 @@ dotenv.config();
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import { courts, players, type CourtZone, type MatchStatus } from "./schema";
-import { eq } from "drizzle-orm";
+import { createInterface } from "node:readline/promises";
 
 export interface SeedCourtDefinition {
   sortOrder: number;
@@ -15,7 +15,7 @@ export interface SeedCourtDefinition {
 
 /**
  * Exact 49 courts in order across the 5 facility zones:
- * 1. Stadium: Stadium Hard, Clay Hard (2)
+ * 1. Stadium: Stadium Hard, Stadium Clay (2)
  * 2. Hard Courts: Hard 1 through Hard 28 (28)
  * 3. East Clay: East Clay 1 through East Clay 9 (9)
  * 4. Legacy: Legacy 1 through Legacy 6 (6)
@@ -25,9 +25,9 @@ export const buildFacilityCourtsList = (): SeedCourtDefinition[] => {
   const list: SeedCourtDefinition[] = [];
   let order = 1;
 
-  // 1. Stadium: Stadium Hard, Clay Hard
+  // 1. Stadium: Stadium Hard, Stadium Clay
   list.push({ sortOrder: order++, name: "Stadium Hard", zone: "Stadium" });
-  list.push({ sortOrder: order++, name: "Clay Hard", zone: "Stadium" });
+  list.push({ sortOrder: order++, name: "Stadium Clay", zone: "Stadium" });
 
   // 2. Hard Courts: Hard 1 through Hard 28
   for (let i = 1; i <= 28; i++) {
@@ -137,10 +137,42 @@ export const FICTIONAL_TENNIS_PLAYERS: Array<{
   { firstName: "Grace", lastName: "Weatherby" },
 ];
 
+/**
+ * The seed wipes every court and player. Make the person running it type
+ * RESET first, so it can't be run against the live event database by accident.
+ * (For scripted use: npm run db:seed -- --yes)
+ */
+const confirmReset = async (databaseUrl: string): Promise<boolean> => {
+  if (process.argv.includes("--yes")) return true;
+
+  let host = "unknown database";
+  try {
+    host = new URL(databaseUrl).host;
+  } catch {
+    // keep default label
+  }
+
+  console.log("");
+  console.log("⚠️  This deletes ALL courts and players and loads fake test data.");
+  console.log(`   Database: ${host}`);
+  console.log("   Do not run this on the live event database during the ITC.");
+  console.log("");
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await rl.question('Type RESET to continue, or press Enter to cancel: ');
+  rl.close();
+  return answer.trim() === "RESET";
+};
+
 const runSeed = async () => {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
     throw new Error("DATABASE_URL is missing in environment");
+  }
+
+  if (!(await confirmReset(databaseUrl))) {
+    console.log("Cancelled. Nothing was changed.");
+    process.exit(0);
   }
 
   const sql = neon(databaseUrl);

@@ -1,18 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { courts, matchStatusEnum, type MatchStatus } from "@/db/schema";
+import { courts, players, matchStatusEnum, type MatchStatus } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import {
   getAdminCourtsAndPlayersData,
   getBoardCourtsData,
 } from "@/lib/queries";
-import { cookies } from "next/headers";
-import { BOARD_PIN_COOKIE_NAME } from "@/app/api/board-auth/route";
+import { isBoardAuthenticated } from "@/lib/board-auth";
 import { adminUnauthorizedResponse, isAdminAuthenticated } from "@/lib/admin-auth";
+import { findAssignmentConflicts } from "@/lib/assignments";
 
 export const dynamic = "force-dynamic";
 
 const VALID_STATUSES = new Set<string>(matchStatusEnum.enumValues);
+
+const PLAYER_SLOTS = ["player1Id", "player2Id", "player3Id", "player4Id"] as const;
+type PlayerSlot = (typeof PLAYER_SLOTS)[number];
+
+/** undefined = not sent (leave as is), null = clear, number = assign */
+const readPlayerId = (value: unknown): number | null | undefined => {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+};
 
 export const GET = async (request: NextRequest) => {
   try {
@@ -26,12 +37,7 @@ export const GET = async (request: NextRequest) => {
       });
     }
 
-    // Check PIN cookie for /board polling
-    const cookieStore = await cookies();
-    const isPinVerified =
-      cookieStore.get(BOARD_PIN_COOKIE_NAME)?.value === "true";
-
-    if (!isPinVerified) {
+    if (!(await isBoardAuthenticated())) {
       return NextResponse.json(
         { error: "PIN authentication required" },
         { status: 401 }
@@ -91,47 +97,64 @@ export const PATCH = async (request: NextRequest) => {
       );
     }
 
-    const player1Id =
-      body?.player1Id === null || body?.player1Id === ""
-        ? null
-        : body?.player1Id !== undefined
-        ? Number(body.player1Id)
-        : undefined;
-
-    const player2Id =
-      body?.player2Id === null || body?.player2Id === ""
-        ? null
-        : body?.player2Id !== undefined
-        ? Number(body.player2Id)
-        : undefined;
+    const allCourts = await db.select().from(courts);
+    const targetCourt = allCourts.find((c) => c.id === courtId);
+    if (!targetCourt) {
+      return NextResponse.json({ error: "Court not found." }, { status: 404 });
+    }
 
     const updatePayload: Partial<typeof courts.$inferInsert> = {
       updatedAt: new Date(),
     };
+    if (status) updatePayload.status = status;
 
-    if (status) {
-      updatePayload.status = status;
-    }
-    if (player1Id !== undefined) {
-      updatePayload.player1Id = player1Id;
-    }
-    if (player2Id !== undefined) {
-      updatePayload.player2Id = player2Id;
-    }
+    const nextSlots: Record<PlayerSlot, number | null> = {
+      player1Id: targetCourt.player1Id,
+      player2Id: targetCourt.player2Id,
+      player3Id: targetCourt.player3Id,
+      player4Id: targetCourt.player4Id,
+    };
 
-    // If status is explicitly set to Open or Maintenance and clearPlayers is true
-    if (
-      (status === "Open" || status === "Maintenance") &&
-      body?.clearPlayers === true
-    ) {
-      updatePayload.player1Id = null;
-      updatePayload.player2Id = null;
+    for (const slot of PLAYER_SLOTS) {
+      const value = readPlayerId(body?.[slot]);
+      if (value !== undefined) {
+        nextSlots[slot] = value;
+        updatePayload[slot] = value;
+      }
     }
 
-    await db
-      .update(courts)
-      .set(updatePayload)
-      .where(eq(courts.id, courtId));
+    if ((status === "Open" || status === "Maintenance") && body?.clearPlayers === true) {
+      for (const slot of PLAYER_SLOTS) {
+        nextSlots[slot] = null;
+        updatePayload[slot] = null;
+      }
+    }
+
+    // A player can only be on one court, and only once on that court.
+    const conflicts = findAssignmentConflicts(
+      allCourts.map((c) => ({
+        courtName: c.name,
+        playerIds:
+          c.id === courtId
+            ? Object.values(nextSlots)
+            : [c.player1Id, c.player2Id, c.player3Id, c.player4Id],
+      }))
+    );
+
+    if (conflicts.length > 0) {
+      const allPlayers = await db.select().from(players);
+      const nameById = new Map(allPlayers.map((p) => [p.id, p.fullName]));
+      const { playerId, courtNames } = conflicts[0];
+      const name = nameById.get(Number(playerId)) ?? "That player";
+      const otherCourts = courtNames.filter((n) => n !== targetCourt.name);
+      const message =
+        otherCourts.length > 0
+          ? `${name} is already on ${otherCourts.join(", ")}. Clear that court first, then assign them here.`
+          : `${name} is already on ${targetCourt.name}. Each player can only be listed once per court.`;
+      return NextResponse.json({ error: message }, { status: 409 });
+    }
+
+    await db.update(courts).set(updatePayload).where(eq(courts.id, courtId));
 
     const updatedData = await getAdminCourtsAndPlayersData();
     return NextResponse.json(updatedData);

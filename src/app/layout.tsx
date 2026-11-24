@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
 import { DM_Sans, Barlow_Condensed } from "next/font/google";
-import { ClerkProvider } from "@clerk/nextjs";
-import { isClerkConfigured } from "@/lib/clerk-config";
 import { EVENT_INFO } from "@/lib/event-config";
 import "./globals.css";
 
@@ -29,9 +27,7 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const clerkReady = isClerkConfigured();
-
-  const content = (
+  return (
     <html
       lang="en"
       className={`${dmSans.variable} ${barlowCondensed.variable} h-full antialiased`}
@@ -41,10 +37,4 @@ export default function RootLayout({
       </body>
     </html>
   );
-
-  if (clerkReady) {
-    return <ClerkProvider>{content}</ClerkProvider>;
-  }
-
-  return content;
 }
